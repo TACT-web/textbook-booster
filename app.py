@@ -4,7 +4,7 @@ from PIL import Image
 import io, json, time, re, datetime
 
 # --- 基本設定 ---
-st.set_page_config(page_title="教科書ブースター V1.1", layout="centered", page_icon="🚀")
+st.set_page_config(page_title="教科書ブースター V1.2", layout="centered", page_icon="🚀")
 
 if "history" not in st.session_state: st.session_state.history = {}
 if "final_json" not in st.session_state: st.session_state.final_json = None
@@ -13,31 +13,35 @@ if "font_size" not in st.session_state: st.session_state.font_size = 18
 
 # --- 添付ファイル仕様継承：教科別個別プロンプト ---
 SUBJECT_PROMPTS = {
-    "英語": "本文の全文和訳を必ず含め、重要な文法事項を3つ抽出せよ。英単語の読み（発音）も audio_script に反映せよ。",
-    "数学": "解法のステップを論理的に分解し、計算過程を省略せずに解説せよ。数式は audio_script で『～の二乗』等に完全変換せよ。",
-    "国語": "文章の要約、重要な語彙の意味、筆者の主張を整理せよ。難読漢字の読みを audio_script に含めよ。",
-    "理科": "図説や実験結果の考察を重視せよ。現象の原理を科学的根拠（[P.〇/〇行目]）に基づいて説明せよ。",
-    "社会": "歴史的背景、地理的特徴、統計資料（表やグラフ）の意味を解説せよ。専門用語の定義を明確にせよ。"
+    "英語": "英文を意味の塊（/）で区切るスラッシュリーディング形式（英文 / 訳）を徹底してください。重要な文法構造や熟語についても触れてください。",
+    "数学": "公式の根拠を重視し、計算過程を一行ずつ省略せず論理的に解説してください。単なる手順ではなく『なぜこの解法を選ぶのか』という思考の起点を言語化してください。",
+    "国語": "論理構造（序破急など）を分解し、筆者の主張を明確にしてください。なぜその結論に至ったか、本文の接続詞などを根拠に論理的に説明してください。",
+    "理科": "現象のメカニズムを原理・法則から説明してください。図表がある場合は、軸の意味や数値の変化が示す本質を読み解き、日常の具体例を添えてください。",
+    "社会": "歴史的背景と現代の繋がりをストーリー化してください。単なる事実の羅列ではなく『なぜこの出来事が起きたのか』という因果関係を重視して解説してください。",
+    "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
 
-# --- 音声合成エンジン（日本語優先） ---
-def inject_speech_script(text, speed):
-    clean_text = text.replace('"', "'").replace("\n", " ")
-    js_code = f"""
-    <script>
-        (function() {{
-            window.parent.speechSynthesis.cancel();
-            const uttr = new SpeechSynthesisUtterance("{clean_text}");
-            uttr.rate = {speed};
-            const voices = window.parent.speechSynthesis.getVoices();
-            let voice = voices.find(v => v.lang === "ja-JP" && (v.name.includes("Google") || v.name.includes("Natural")));
-            if (!voice) voice = voices.find(v => v.lang.startsWith("ja"));
-            uttr.voice = voice;
-            uttr.lang = "ja-JP";
-            window.parent.speechSynthesis.speak(uttr);
-        }})();
-    </script>
-    """
+# --- 音声合成エンジン（日本語優先 / 停止機能追加） ---
+def inject_speech_script(text=None, speed=1.0, stop=False):
+    if stop:
+        js_code = "<script>window.parent.speechSynthesis.cancel();</script>"
+    else:
+        clean_text = text.replace('"', "'").replace("\n", " ")
+        js_code = f"""
+        <script>
+            (function() {{
+                window.parent.speechSynthesis.cancel();
+                const uttr = new SpeechSynthesisUtterance("{clean_text}");
+                uttr.rate = {speed};
+                const voices = window.parent.speechSynthesis.getVoices();
+                let voice = voices.find(v => v.lang === "ja-JP" && (v.name.includes("Google") || v.name.includes("Natural")));
+                if (!voice) voice = voices.find(v => v.lang.startsWith("ja"));
+                uttr.voice = voice;
+                uttr.lang = "ja-JP";
+                window.parent.speechSynthesis.speak(uttr);
+            }})();
+        </script>
+        """
     st.components.v1.html(js_code, height=0, width=0)
 
 # --- スタイル適用 ---
@@ -47,7 +51,7 @@ st.markdown(f"<style>.content-body {{ font-size: {st.session_state.font_size}px;
 # 1. 冒頭：厳格な免責事項 ＆ 同意（第1条〜第3条 厳守）
 # ==========================================
 if not st.session_state.agreed:
-    st.title("🚀 教科書ブースター V1.1")
+    st.title("🚀 教科書ブースター V1.2")
     with st.container(border=True):
         st.markdown("""
         ### 【本ソフトウェア利用に関する同意事項】
@@ -89,32 +93,48 @@ if not st.session_state.agreed:
 tab1, tab2 = st.tabs(["📖 学習ブースト", "📈 ブースト履歴"])
 
 with tab1:
-    subject = st.selectbox("🎯 ターゲット教科", list(SUBJECT_PROMPTS.keys()))
+    subject_choice = st.selectbox("🎯 ターゲット教科", list(SUBJECT_PROMPTS.keys()))
+    
+    # 追加機能：その他の教科名入力
+    final_subject_name = subject_choice
+    if subject_choice == "その他":
+        custom_subject = st.text_input("具体的な教科名を入力してください")
+        if custom_subject:
+            final_subject_name = custom_subject
+
     cam_file = st.camera_input("教科書をスキャン")
 
-    if cam_file and st.button("✨ ナレッジ・ブースト開始"):
+    if cam_file and st.button("✨ ブースト開始！"):
         genai.configure(api_key=st.session_state.user_api_key)
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
         with st.status("教科別ロジックを適用中...🚀"):
             prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}担当の天才教育者です。
             
-            【教科別個別ミッション: {subject}】
-            {SUBJECT_PROMPTS[subject]}
+            【教科別個別ミッション: {final_subject_name}】
+            {SUBJECT_PROMPTS[subject_choice]}
 
             【共通厳守ルール】
-            1. 画像内の教科が「{subject}」でない場合は is_match: false として即終了せよ。
-            2. 根拠箇所を必ず [P.〇 / 〇行目] の形式で本文末尾に付加せよ。
+            1. 画像内の教科が「{final_subject_name}」でない場合は is_match: false として即終了せよ。
+            2. 根拠箇所を必ず [P.〇 / 〇行目] の形式で本文末尾に太字で付加せよ。
             3. audio_scriptは記号や数式を自然な日本語の読み（ひらがな）に変換せよ。
             4. 正答率別のブーストメッセージ(high, mid, low)を音声台本付きで作れ。
             5. 解説は{st.session_state.age_val}歳に最適な言葉を選べ。
+            6. **内容の深さと構造**: 解説の質を落とさず深く解説せよ。ただし、出力は100文字前後の「意味のまとまり（ブロック）」ごとに改行して構成すること。
+            7. **年齢別ルビ**: 相手は{st.session_state.age_val}歳。学年相当の既習漢字を考慮し、未習漢字や難読語にのみ「漢字(かんじ)」でルビを振る。
+            8. **問題数指定**: 練習問題(quizzes)は必ず「{st.session_state.quiz_count}問」生成すること。
 
             ###JSON###
             {{
-                "is_match": true, "detected_subject": "教科名", "page": "数字",
-                "explanation": "解説全文([P.〇/〇行目]を含む)", "audio_script": "解説用台本",
+                "is_match": true, "detected_subject": "{final_subject_name}", "page": "数字",
+                "explanation": "解説全文([P.〇/〇行目]を含む)", 
+                "explanation_blocks": [
+                    {{"text": "ブロック1の解説内容", "audio": "ブロック1の音声台本"}},
+                    {{"text": "ブロック2の解説内容", "audio": "ブロック2の音声台本"}}
+                ],
+                "audio_script": "解説全文の台本",
                 "boost_comments": {{"high":{{"text":"..","script":".."}},"mid":{{"text":"..","script":".."}},"low":{{"text":"..","script":".."}}}},
-                "quizzes": [{{"question":"..","options":["A","B","C","D"],"answer":0,"location":"P.〇/〇行目"}}]
+                "quizzes": [{{ "question":"..", "options":["A","B","C","D"], "answer":0, "location":"P.〇/〇行目" }}]
             }}"""
             
             img = Image.open(cam_file)
@@ -124,16 +144,35 @@ with tab1:
             if not res_json.get("is_match"):
                 st.error(f"🚫 教科不一致ブロック: 判定結果は「{res_json['detected_subject']}」です。")
                 st.stop()
+            
+            res_json["used_subject"] = final_subject_name
             st.session_state.final_json = res_json
             st.rerun()
 
     if st.session_state.final_json:
         res = st.session_state.final_json
+        target_sub = res.get("used_subject", "不明")
         st.session_state.font_size = st.slider("🔍 視認性ブースト（文字サイズ）", 14, 45, st.session_state.font_size)
-        
+  
         with st.container(border=True):
+            # 追加機能：全体停止
+            if st.button("🛑 音声を止める", use_container_width=True):
+                inject_speech_script(stop=True)
+            
+            # 元の仕様：explanation全文表示
             st.markdown(f'<div class="content-body">{res["explanation"]}</div>', unsafe_allow_html=True)
+            
+            # 元の仕様：全体音声
             if st.button("🔊 音声解説を聴く"): inject_speech_script(res["audio_script"], 1.0)
+            
+            st.divider()
+            st.write("▼ ブロック毎の音声解説")
+            # 追加機能：ブロック毎の再生（通常隠蔽）
+            for i, block in enumerate(res.get("explanation_blocks", [])):
+                with st.expander(f"🔊 ブロック{i+1}の音声を出す"):
+                    st.write(block["text"])
+                    if st.button(f"再生", key=f"play_{i}"):
+                        inject_speech_script(block["audio"])
 
         st.subheader("📝 ブースト・チェック")
         user_page = st.text_input("📖 ページ番号確認", value=res.get("page", ""))
@@ -150,8 +189,8 @@ with tab1:
             st.success(fb["text"])
             inject_speech_script(fb["script"], 1.1)
             
-            if subject not in st.session_state.history: st.session_state.history[subject] = []
-            st.session_state.history[subject].append({"date": datetime.datetime.now().strftime("%m/%d %H:%M"), "page": user_page, "score": f"{rate:.0f}%"})
+            if target_sub not in st.session_state.history: st.session_state.history[target_sub] = []
+            st.session_state.history[target_sub].append({"date": datetime.datetime.now().strftime("%m/%d %H:%M"), "page": user_page, "score": f"{rate:.0f}%"})
 
 with tab2:
     st.header("📈 ブースト履歴")
