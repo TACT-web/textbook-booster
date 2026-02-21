@@ -117,7 +117,7 @@ st.markdown('</div></div>', unsafe_allow_html=True)
 if cam_image and st.button("✨ AI先生の解析をリクエスト", use_container_width=True):
     genai.configure(api_key=st.session_state.user_api_key)
     # 3-flash-previewの後継である2.0-flashを指定
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
     with st.status("🚀 最先端AIが教科書を読み解いています...", expanded=True):
         subjects_map = {
             "国語": "論理構造を分解し、筆者の主張を接続詞などの根拠に基づき論理的に説明してください。",
