@@ -102,7 +102,7 @@ st.markdown('</div></div>', unsafe_allow_html=True)
 # --- C. 解析（最強プロンプト・全仕様） ---
 if cam_image and st.button("✨ 解析を開始！", use_container_width=True):
     genai.configure(api_key=st.session_state.user_api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
     with st.status("🚀 AI先生が解析中...", expanded=True):
         subjects_map = {
             "国語": "論理構造（序破急など）を分解し、筆者の主張を明確にしてください。なぜその結論に至ったか、本文の接続詞などを根拠に論理的に説明してください。",
