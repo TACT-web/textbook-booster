@@ -106,7 +106,7 @@ with tab1:
 
     if cam_file and st.button("✨ ナレッジ・ブースト開始"):
         genai.configure(api_key=st.session_state.user_api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-3-flash-preview')
         
         with st.status("解析中...🚀"):
             prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}担当の天才教育者です。
