@@ -1,20 +1,28 @@
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
-import io, json, time, re, random
+import io, json, time, re, datetime
 
-# ==========================================
-# ① 基本設定 & デザイン & 音声エンジン
-# ==========================================
-st.set_page_config(page_title="教科書ブースター V10.5", layout="centered", page_icon="🚀")
+# --- 基本設定 & 画面構成 ---
+st.set_page_config(page_title="教科書ブースター V10.7", layout="centered", page_icon="🚀")
 
+if "history" not in st.session_state: st.session_state.history = {}
+if "final_json" not in st.session_state: st.session_state.final_json = None
+if "agreed" not in st.session_state: st.session_state.agreed = False
+if "font_size" not in st.session_state: st.session_state.font_size = 18
+
+# --- 教科別・解析詳細プロンプト（添付ファイルの仕様を継承） ---
+SUBJECT_PROMPTS = {
+    "英語": "本文の全文和訳を必ず含め、重要な文法事項を3つ抽出せよ。英単語の読み（発音）も audio_script に反映せよ。",
+    "数学": "解法のステップを論理的に分解し、計算過程を省略せずに解説せよ。数式は audio_script で『～の二乗』等に完全変換せよ。",
+    "国語": "文章の要約、重要な語彙の意味、筆者の主張を整理せよ。難読漢字の読みを audio_script に含めよ。",
+    "理科": "図説や実験結果の考察を重視せよ。現象の原理を科学的根拠（[P.〇/〇行目]）に基づいて説明せよ。",
+    "社会": "歴史的背景、地理的特徴、統計資料（表やグラフ）の意味を解説せよ。専門用語の定義を明確にせよ。"
+}
+
+# --- 音声合成エンジン ---
 def inject_speech_script(text, speed):
-    # 音声読み上げ時にルビ「漢字(かんじ)」のカッコ内を完全に除去する強化版
-    clean_text = re.sub(r'\(.*?\)', '', text)
-    clean_text = re.sub(r'\[.*?行目\]|[*#/]', '', clean_text).replace('"', "'").replace("\n", " ")
-    
-    is_english = len(re.findall(r'[a-zA-Z]', clean_text)) > (len(clean_text) / 2)
-    target_lang = "en-US" if is_english else "ja-JP"
+    clean_text = text.replace('"', "'").replace("\n", " ")
     js_code = f"""
     <script>
         (function() {{
@@ -22,160 +30,104 @@ def inject_speech_script(text, speed):
             const uttr = new SpeechSynthesisUtterance("{clean_text}");
             uttr.rate = {speed};
             const voices = window.parent.speechSynthesis.getVoices();
-            let voice = voices.find(v => v.lang === "{target_lang}" && (v.name.includes("Google") || v.name.includes("Natural")));
-            if (!voice) voice = voices.find(v => v.lang.startsWith("{target_lang.split('-')[0]}"));
-            uttr.lang = voice ? voice.lang : "{target_lang}";
+            let voice = voices.find(v => v.lang === "ja-JP" && (v.name.includes("Google") || v.name.includes("Natural")));
+            if (!voice) voice = voices.find(v => v.lang.startsWith("ja"));
+            uttr.voice = voice;
+            uttr.lang = "ja-JP";
             window.parent.speechSynthesis.speak(uttr);
         }})();
     </script>
     """
     st.components.v1.html(js_code, height=0, width=0)
 
-st.markdown("""
-    <style>
-    header {visibility: hidden;}
-    .main-title { font-size: min(8vw, 35px); font-weight: 900; color: #1a365d; text-align: center; margin: 10px 0; }
-    .section-container { margin-bottom: 25px; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06); background-color: white; }
-    .section-band { padding: 12px 20px; color: white; font-weight: bold; font-size: 1.1rem; }
-    .band-green { background: linear-gradient(90deg, #2ecc71, #27ae60); }
-    .band-blue { background: linear-gradient(90deg, #3498db, #2980b9); }
-    .band-pink { background: linear-gradient(90deg, #e91e63, #c2185b); }
-    .content-body { padding: 25px; line-height: 1.9; }
-    .law-notice { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 8px; font-size: 0.9rem; border: 1px solid #ffeeba; margin-bottom: 20px; }
-    .agree-text { text-align: center; font-weight: bold; font-size: 1.2rem; color: #d32f2f; line-height: 1.4; margin-bottom: 20px; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- スタイル設定 ---
+st.markdown(f"<style>.content-body {{ font-size: {st.session_state.font_size}px; line-height: 1.8; }}</style>", unsafe_allow_html=True)
 
-if "final_json" not in st.session_state: st.session_state.final_json = None
-if "explanation" not in st.session_state: st.session_state.explanation = ""
-if "agreed" not in st.session_state: st.session_state.agreed = False
-
-# --- A. 初期設定 ＆ 著作権保護同意（一括統合画面） ---
+# ==========================================
+# 1. 同意 ＆ 設定
+# ==========================================
 if not st.session_state.agreed:
-    st.markdown('<div class="main-title">🚀 教科書ブースター V10.5</div>', unsafe_allow_html=True)
-    st.markdown('<div class="agree-text">最初に個人設定と<br>著作権保護の同意を<br>お願いします。</div>', unsafe_allow_html=True)
-    
-    # APIキー入力（モデル名明記）
-    user_api_key = st.text_input("🔑 Gemini API Keyを入力 ", type="password", placeholder="AIzaSy...")
-    
-    st.divider()
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.session_state.school_type = st.selectbox("② あなたの学校は？", ["小学生", "中学生", "高校生", "大学生・社会人"])
-        st.session_state.grade = st.selectbox("③ 今何年生？", ["1年生", "2年生", "3年生", "4年生", "5年生", "6年生", "なし"])
-    with col_b:
-        st.session_state.age_val = st.select_slider("④ 何歳レベルで解説する？", options=list(range(7, 26)), value=15)
-        st.session_state.quiz_count = st.selectbox("⑤ 練習問題の数", [5, 10, 15, 20], index=2)
-    
-    st.session_state.mode = st.radio("⑥ 今日の解説スタイルは？", ["解説のみ", "対話形式", "自由入力"], horizontal=True)
-    st.session_state.custom_style = st.text_input("具体的リクエスト", "") if st.session_state.mode == "自由入力" else ""
-
-    st.markdown("""
-    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; font-size: 0.85rem; border: 1px solid #ddd;">
-    <strong>【著作権および利用に関する重要事項】</strong><br>
-    本アプリは、ユーザーが所有する教科書等の学習を支援するためのツールです。利用にあたっては以下の条件に同意したものとみなされます。<br><br>
-    1. <strong>私的使用の遵守</strong>：本アプリで生成された回答や画像解析結果は、利用者本人の学習目的以外（営利目的、または第三者への提供）には使用できません。<br>
-    2. <strong>公衆送信の禁止</strong>：教科書の画像や、本アプリによる解析結果（文章・問題）をインターネット上のSNS、掲示板、ブログ等へ転載・アップロードすることを固く禁じます。<br>
-    3. <strong>権利の尊重</strong>：解析対象となる著作物の著作者の権利を侵害しないよう、適切な範囲内で利用してください。<br>
-    4. <strong>再配布・商用利用の禁止</strong>：AIによる生成内容を、自身の教材として販売したり、無断で配布したりすることはできません。
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.button("✅ 設定と著作権事項に同意して開始", use_container_width=True):
-        if not user_api_key: st.warning("APIキーを入力してください。")
-        else:
-            st.session_state.user_api_key = user_api_key
-            st.session_state.agreed = True
-            st.rerun()
+    st.title("🚀 教科書ブースター V10.7")
+    with st.container(border=True):
+        st.markdown("""### 【重要】本ソフトウェア利用に関する同意事項
+**第1条（著作権）** 解析結果や画像をSNS等に無断転載することを禁じます。
+**第2条（免責）** AIは誤情報を生成する可能性があります（ハルシネーション）。最終確認は教科書で行ってください。""")
+        if st.checkbox("法的事項に同意してブーストを開始する"):
+            api_key = st.text_input("Gemini API Key", type="password")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.session_state.school_type = st.selectbox("学校", ["小学生", "中学生", "高校生"])
+                st.session_state.grade = st.selectbox("学年", [f"{i}年" for i in range(1, 7)])
+            with c2:
+                st.session_state.age_val = st.slider("解説年齢", 7, 20, 15)
+                st.session_state.quiz_count = st.selectbox("問題数", [3, 5, 10])
+            
+            if st.button("🚀 ブースト開始"):
+                if api_key: st.session_state.update({"user_api_key": api_key, "agreed": True}); st.rerun()
+                else: st.error("APIキーを入力してください")
     st.stop()
 
-# --- B. メイン画面：教科指定 ＆ 撮影 ---
-st.markdown('<div class="law-notice">⚠️ <b>無断転載・公衆送信禁止</b>：解析結果の外部公開は法律で禁じられています。</div>', unsafe_allow_html=True)
-st.markdown('<div class="section-container"><div class="section-band band-green">📸 教科指定と撮影</div><div class="content-body">', unsafe_allow_html=True)
+# ==========================================
+# 2. メイン機能
+# ==========================================
+tab1, tab2 = st.tabs(["📖 学習", "📈 履歴"])
 
-subject = st.selectbox("🎯 学習する教科を選択してください", ["英語", "国語", "数学", "理科", "社会", "その他"])
+with tab1:
+    sub = st.selectbox("🎯 教科", list(SUBJECT_PROMPTS.keys()))
+    cam_file = st.camera_input("スキャン")
 
-st.write("👇 教科書を撮影してください")
-st.write("<small>（切り替えアイコン🔄が表示される場合は、タップして背面カメラを選択してください）</small>", unsafe_allow_html=True)
-
-cam_image = st.camera_input("カメラ起動", label_visibility="collapsed")
-st.markdown('</div></div>', unsafe_allow_html=True)
-
-# --- C. 解析（Gemini 2.0 Flash・意味ブロック化プロンプト） ---
-if cam_image and st.button("✨ AI先生の解析をリクエスト", use_container_width=True):
-    genai.configure(api_key=st.session_state.user_api_key)
-    model = genai.GenerativeModel('gemini-3-flash-preview')
-    with st.status("🚀 AI先生が深い解説を作成中...", expanded=True):
-        subjects_map = {
-            "国語": "論理構造を分解し筆者の主張を説明。",
-            "数学": "計算過程を省略せず、なぜその解法か思考の起点を言語化。",
-            "英語": "スラッシュリーディング（英文 / 訳）を徹底。",
-            "理科": "原理・法則から説明し日常の具体例を提示。",
-            "社会": "歴史的背景と現代の繋がりをストーリー化。",
-            "その他": "要点を3つのポイントに整理。"
-        }
+    if cam_file and st.button("✨ 解析"):
+        genai.configure(api_key=st.session_state.user_api_key)
+        model = genai.GenerativeModel('gemini-3-flash-preview')
         
-        full_prompt = f"""あなたは【{st.session_state.school_type} {st.session_state.grade}】の内容を【{st.session_state.age_val}歳】に教える天才教師です。
-【教科別指示（{subject}）】{subjects_map.get(subject, "")}
-【絶対遵守ルール】
-1. **内容の深さと構造**: 解説の質を落とさず深く解説せよ。ただし、出力は100文字前後の「意味のまとまり（ブロック）」ごとに改行して構成すること。
-2. **年齢別ルビ**: 相手は{st.session_state.age_val}歳。学年相当の既習漢字を考慮し、未習漢字や難読語にのみ「漢字(かんじ)」でルビを振る。
-3. **根拠**: **[〇行目]**と太字で明示。
-4. **構成**: 【要約】【重要語句】【解説】。
-5. **練習問題**: 最後に ###JSON### の後に必ず【{st.session_state.quiz_count}問】作成。
-###JSON###
-{{"quizzes": [{{"question": "問題", "options": ["A","B","C","D"], "answer": 0, "line": "〇行目"}}]}}"""
-
-        try:
-            img = Image.open(cam_image)
-            response = model.generate_content([full_prompt, img])
-            res_text = response.text
-            if "###JSON###" in res_text:
-                st.session_state.explanation, json_part = res_text.split("###JSON###")
-                json_match = re.search(r"\{.*\}", json_part, re.DOTALL)
-                if json_match: st.session_state.final_json = json.loads(json_match.group())
-            else: st.session_state.explanation = res_text
+        with st.status("教科別プロンプトを適用して解析中...🚀"):
+            # 【重要】教科別の個別指示(SUBJECT_PROMPTS[sub])を埋め込み
+            prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}の天才教師です。
+            【個別ミッション: {sub}】
+            {SUBJECT_PROMPTS[sub]}
+            
+            【共通ルール】
+            1. 教科が「{sub}」でなければ即座にis_match:falseで終了せよ。
+            2. 根拠を必ず [P.〇 / 〇行目] で明示せよ。
+            3. audio_scriptは記号や数式を自然な日本語（ひらがな）に変換せよ。
+            4. 正答率別のブーストメッセージ(high, mid, low)を音声台本付きで作れ。
+            
+            ###JSON###
+            {{
+                "is_match": true, "detected_subject": "教科名", "page": "数字",
+                "explanation": "解説全文", "audio_script": "読み上げ台本",
+                "boost_comments": {{"high":{{"text":"..","script":".."}},"mid":{{"text":"..","script":".."}},"low":{{"text":"..","script":".."}}}},
+                "quizzes": [{{"question":"..","options":["A","B","C","D"],"answer":0,"location":"P.〇/〇行"}}]
+            }}"""
+            
+            res_raw = model.generate_content([prompt, Image.open(cam_file)])
+            res_json = json.loads(re.search(r"\{.*\}", res_raw.text, re.DOTALL).group())
+            
+            if not res_json.get("is_match"): st.error(f"教科不一致:判定{res_json['detected_subject']}"); st.stop()
+            st.session_state.final_json = res_json
             st.rerun()
-        except Exception as e: st.error(f"解析エラー: {e}")
 
-# --- D. 解説表示 & 音声再生（個別音声スイッチ式） ---
-if st.session_state.explanation:
-    st.markdown('<div class="section-container"><div class="section-band band-blue">👨‍🏫 AI先生の徹底解説</div><div class="content-body">', unsafe_allow_html=True)
-    speed = st.slider("🔊 読み上げ速度", 0.5, 2.0, 1.0)
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("▶ 全体を再生", use_container_width=True): inject_speech_script(st.session_state.explanation, speed)
-    with c2:
-        if st.button("⏹ 停止", use_container_width=True): st.components.v1.html("<script>window.parent.speechSynthesis.cancel();</script>", height=0)
-    
-    # 個別音声スイッチ（視認性のための新機能）
-    show_individual = st.checkbox("🎯 個別音声ボタンを表示する", value=False)
-    
-    st.divider()
-    # 段落（ブロック）ごとに分割
-    paragraphs = [p.strip() for p in st.session_state.explanation.split('\n') if p.strip()]
-    for i, p in enumerate(paragraphs):
-        if show_individual:
-            col_txt, col_btn = st.columns([0.85, 0.15])
-            with col_txt: st.markdown(p)
-            with col_btn:
-                if st.button("🔊", key=f"p_{i}"): inject_speech_script(p, speed)
-        else:
-            st.markdown(p)
-    st.markdown('</div></div>', unsafe_allow_html=True)
+    if st.session_state.final_json:
+        res = st.session_state.final_json
+        st.session_state.font_size = st.slider("🔍 視認性ブースト", 14, 45, st.session_state.font_size)
+        
+        st.markdown(f'<div class="content-body">{res["explanation"]}</div>', unsafe_allow_html=True)
+        if st.button("🔊 音声解説"): inject_speech_script(res["audio_script"], 1.0)
 
-# --- E. 練習問題 ---
-if st.session_state.final_json:
-    st.markdown('<div class="section-container"><div class="section-band band-pink">📝 練習問題</div><div class="content-body">', unsafe_allow_html=True)
-    for i, q in enumerate(st.session_state.final_json.get("quizzes", [])):
-        st.write(f"**問{i+1}: {q.get('question')}**")
-        opts = q.get('options', ["A", "B", "C", "D"])
-        ans = st.radio(f"選択 問{i+1}", opts, key=f"q_{i}", label_visibility="collapsed")
-        if st.button(f"答え合わせ 問{i+1}", key=f"b_{i}"):
-            if opts.index(ans) == q.get('answer'): st.success(f"正解！⭕ ({q.get('line')})")
-            else: st.error(f"不正解❌ 正解は: {opts[q.get('answer')]} ({q.get('line')})")
-    
-    if st.button("🗑️ 学習をリセットして戻る", use_container_width=True):
-        st.session_state.final_json = st.session_state.explanation = None
-        st.rerun()
-    st.markdown('</div></div>', unsafe_allow_html=True)
+        st.divider()
+        st.subheader("📝 クイズ")
+        page_num = st.text_input("📖 ページ", value=res.get("page", ""))
+        score = 0
+        for i, q in enumerate(res["quizzes"]):
+            ans = st.radio(f"問{i+1} ({q['location']})", q['options'], key=f"q_{i}")
+            if q['options'].index(ans) == q['answer']: score += 1
+        
+        if st.button("🏁 判定"):
+            rate = (score / len(res["quizzes"])) * 100
+            rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
+            st.success(res["boost_comments"][rank]["text"])
+            inject_speech_script(res["boost_comments"][rank]["script"], 1.1)
+            
+            # 履歴保存
+            if sub not in st.session_state.history: st.session_state.history[sub] = []
+            st.session_state.history[sub].append({"date": datetime.datetime.now().strftime("%m/%d %H:%M"), "page": page_num, "score": f"{rate:.0f}%"})
