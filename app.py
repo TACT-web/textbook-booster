@@ -10,9 +10,9 @@ if "history" not in st.session_state: st.session_state.history = {}
 if "final_json" not in st.session_state: st.session_state.final_json = None
 if "agreed" not in st.session_state: st.session_state.agreed = False
 if "font_size" not in st.session_state: st.session_state.font_size = 18
-if "show_blocks" not in st.session_state: st.session_state.show_blocks = False
+if "show_voice_btns" not in st.session_state: st.session_state.show_voice_btns = False
 
-# --- 添付ファイル仕様継承：教科別個別プロンプト (一言一句変更なし) ---
+# --- 添付ファイル仕様継承：教科別個別プロンプト（一言一句変更なし） ---
 SUBJECT_PROMPTS = {
     "英語": "英文を意味の塊（/）で区切るスラッシュリーディング形式（英文 / 訳）を徹底してください。重要な文法構造や熟語についても触れてください。",
     "数学": "公式の根拠を重視し、計算過程を一行ずつ省略せず論理的に解説してください。単なる手順ではなく『なぜこの解法を選ぶのか』という思考の起点を言語化してください。",
@@ -22,32 +22,34 @@ SUBJECT_PROMPTS = {
     "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
 
-# --- 音声合成エンジン（速度調整・言語切り替え機能） ---
-def inject_speech_script(text=None, speed=1.0, stop=False, is_english=False):
+# --- 音声合成エンジン（連続再生・停止・言語切替） ---
+def inject_speech_script(text_list=None, speed=1.0, stop=False, is_english=False):
     if stop:
         js_code = "<script>window.parent.speechSynthesis.cancel();</script>"
     else:
-        clean_text = text.replace('"', "'").replace("\n", " ")
+        if isinstance(text_list, str): text_list = [text_list]
+        json_texts = json.dumps(text_list, ensure_ascii=False)
         lang = "en-US" if is_english else "ja-JP"
         js_code = f"""
         <script>
             (function() {{
-                window.parent.speechSynthesis.cancel();
-                const uttr = new SpeechSynthesisUtterance("{clean_text}");
-                uttr.rate = {speed};
-                const voices = window.parent.speechSynthesis.getVoices();
-                let voice = voices.find(v => v.lang === "{lang}");
-                if (!voice && "{lang}" === "ja-JP") voice = voices.find(v => v.lang.startsWith("ja"));
-                uttr.voice = voice;
-                uttr.lang = "{lang}";
-                window.parent.speechSynthesis.speak(uttr);
+                const synth = window.parent.speechSynthesis;
+                synth.cancel();
+                const texts = {json_texts};
+                texts.forEach((txt) => {{
+                    const uttr = new SpeechSynthesisUtterance(txt.replace(/\\n/g, ' '));
+                    uttr.rate = {speed};
+                    uttr.lang = "{lang}";
+                    const voices = synth.getVoices();
+                    let voice = voices.find(v => v.lang === "{lang}" && (v.name.includes("Google") || v.name.includes("Natural")));
+                    if (!voice) voice = voices.find(v => v.lang.startsWith("{lang.split('-')[0]}"));
+                    uttr.voice = voice;
+                    synth.speak(uttr);
+                }});
             }})();
         </script>
         """
     st.components.v1.html(js_code, height=0, width=0)
-
-# --- スタイル適用 ---
-st.markdown(f"<style>.content-body {{ font-size: {st.session_state.font_size}px; line-height: 1.8; }}</style>", unsafe_allow_html=True)
 
 # ==========================================
 # 1. 冒頭：厳格な免責事項 ＆ 同意（第1条〜第3条 厳守）
@@ -67,7 +69,6 @@ if not st.session_state.agreed:
         **第3条（利用目的）**
         本アプリは利用者の私的な学習補助を目的として提供されるものです。試験等の最終的な確認は、必ず公式な教材および指導者の指示に従ってください。
         """)
-        
         agree_check = st.checkbox("上記の内容を理解し、すべての条項に同意します。")
 
     if agree_check:
@@ -79,7 +80,7 @@ if not st.session_state.agreed:
             st.session_state.grade = st.selectbox("学年", [f"{i}年生" for i in range(1, 7)])
         with c2:
             st.session_state.age_val = st.slider("解説ターゲット年齢", 7, 20, 15)
-            st.session_state.quiz_count = st.selectbox("問題数", [3, 5, 10, 15, 20])
+            st.session_state.quiz_count = st.selectbox("問題数", [10, 15, 20, 25])
 
         if st.button("🚀 ブーストを開始する", use_container_width=True):
             if api_key:
@@ -96,7 +97,6 @@ tab1, tab2 = st.tabs(["📖 学習ブースト", "📈 ブースト履歴"])
 
 with tab1:
     subject_choice = st.selectbox("🎯 ターゲット教科", list(SUBJECT_PROMPTS.keys()))
-    
     final_subject_name = subject_choice
     if subject_choice == "その他":
         custom_subject = st.text_input("具体的な教科名を入力してください")
@@ -108,7 +108,7 @@ with tab1:
         genai.configure(api_key=st.session_state.user_api_key)
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
-        with st.status("教科別ロジックを適用中...🚀"):
+        with st.status("解析中...🚀"):
             prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}担当の天才教育者です。
             
             【教科別個別ミッション: {final_subject_name}】
@@ -120,100 +120,106 @@ with tab1:
             3. audio_scriptは記号や数式を自然な日本語の読み（ひらがな）に変換せよ。
             4. 正答率別のブーストメッセージ(high, mid, low)を音声台本付きで作れ。
             5. 解説は{st.session_state.age_val}歳に最適な言葉を選べ。
-            6. **内容の深さと構造**: 解説の質を落とさず深く解説せよ。出力は100文字前後のブロックに分け、英語なら「英文(改行)解説」の構成にせよ。
-            7. **年齢別ルビ(厳格化)**: 相手は{st.session_state.age_val}歳。常用漢字には振らず、難読語にのみ「漢字(かんじ)」でルビを振る。1ブロックにつきルビは最大3箇所に絞れ。
-            8. **問題数指定**: 練習問題(quizzes)は必ず「{st.session_state.quiz_count}問」生成すること。
+            6. 内容の深さと構造: 解説の質を落とさず深く解説せよ。出力は100文字前後のブロックに分け、英語なら「英文\\n解説」の構成にせよ。
+            7. 年齢別ルビ: 相手は{st.session_state.age_val}歳。常用漢字には振らず、難読語にのみ「漢字(かんじ)」でルビを振れ。1ブロックにつきルビは最大2箇所。
+            8. 問題数指定: 練習問題(quizzes)は必ず「{st.session_state.quiz_count}問」生成すること。
 
-            ###JSON###
+            ###JSON形式で出力せよ###
             {{
-                "is_match": true, "detected_subject": "{final_subject_name}", "page": "数字",
-                "explanation": "解説全文", 
-                "explanation_blocks": [
-                    {{"text": "本文・英文\\n解説", "audio_target": "英文のみ、または本文のみ"}}
+                \"is_match\": true, \"detected_subject\": \"{final_subject_name}\", \"page\": \"数字\",
+                \"explanation\": \"解説全文\",
+                \"explanation_blocks\": [
+                    {{\"text\": \"本文・英文\\n解説\", \"audio_target\": \"再生用テキスト(英語なら英文のみ)\"}}
                 ],
-                "audio_script": "解説全文の台本(全文読み上げ用)",
-                "boost_comments": {{"high":{{"text":"..","script":".."}},"mid":{{"text":"..","script":".."}},"low":{{"text":"..","script":".."}}}},
-                "quizzes": [{{ "question":"..", "options":["A","B","C","D"], "answer":0, "location":"P.〇/〇行目" }}]
+                \"audio_script\": \"解説全文の台本\",
+                \"boost_comments\": {{\"high\":{{\"text\":\"..\",\"script\":\"..\"}},\"mid\":{{\"text\":\"..\",\"script\":\"..\"}},\"low\":{{\"text\":\"..\",\"script\":\"..\"}}}},
+                \"quizzes\": [{{ \"question\":\"..\", \"options\":[\"A\",\"B\",\"C\",\"D\"], \"answer\":0, \"location\":\"P.〇\" }}]
             }}"""
             
             img = Image.open(cam_file)
             res_raw = model.generate_content([prompt, img])
-            res_json = json.loads(re.search(r"\{.*\}", res_raw.text, re.DOTALL).group())
+            json_str = re.search(r"\{.*\}", res_raw.text, re.DOTALL).group()
+            res_json = json.loads(json_str)
             
             if not res_json.get("is_match"):
-                st.error(f"🚫 教科不一致: 判定結果は「{res_json['detected_subject']}」です。")
-                st.stop()
+                st.error(f"🚫 教科不一致: {res_json['detected_subject']}"); st.stop()
             
             res_json["used_subject"] = final_subject_name
             st.session_state.final_json = res_json
-            st.session_state.show_blocks = False
+            st.session_state.show_voice_btns = (final_subject_name == "英語")
             st.rerun()
 
     if st.session_state.final_json:
         res = st.session_state.final_json
         target_sub = res.get("used_subject", "不明")
+        is_eng = (target_sub == "英語")
         
-        # --- 音声・視認性設定 ---
-        with st.sidebar:
-            st.header("⚙️ 音声・表示設定")
-            speech_speed = st.slider("🐌 音声速度", 0.5, 2.0, 1.0, 0.1)
-            st.session_state.font_size = st.slider("🔍 文字サイズ", 14, 45, st.session_state.font_size)
+        # 音声・視認性コントロール
+        speech_speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
 
         with st.container(border=True):
-            # 音声操作ボタン配置
-            col_a, col_b, col_c = st.columns(3)
+            col_a, col_b, col_c, col_d = st.columns(4)
             with col_a:
                 if st.button("🔊 全文再生", use_container_width=True):
                     inject_speech_script(res["audio_script"], speech_speed)
             with col_b:
-                if st.button("🛑 停止", use_container_width=True):
+                if st.button("🛑 全停止", use_container_width=True):
                     inject_speech_script(stop=True)
             with col_c:
-                if st.button("🎙️ ブロック別音声", use_container_width=True):
-                    st.session_state.show_blocks = not st.session_state.show_blocks
+                btn_label = "🎙️ 個別音声:ON" if st.session_state.show_voice_btns else "🎙️ 個別音声:OFF"
+                if st.button(btn_label, use_container_width=True):
+                    st.session_state.show_voice_btns = not st.session_state.show_voice_btns
+            with col_d:
+                if is_eng and st.button("⏩ 連続再生", use_container_width=True):
+                    eng_texts = [b["audio_target"] for b in res["explanation_blocks"]]
+                    inject_speech_script(eng_texts, speech_speed, is_english=True)
 
             st.divider()
             
-            # 全文表示 (V1.1仕様)
-            st.markdown(f'<div class="content-body">{res["explanation"]}</div>', unsafe_allow_html=True)
-            
-            # ブロック表示 (切り替え仕様)
-            if st.session_state.show_blocks:
-                st.info("💡 各ブロックの音声を個別に再生できます")
-                for i, block in enumerate(res.get("explanation_blocks", [])):
-                    with st.container(border=True):
-                        st.markdown(f'<div class="content-body">{block["text"].replace("\\n", "<br>")}</div>', unsafe_allow_html=True)
-                        is_eng = (target_sub == "英語")
-                        label = "🔤 英文を再生" if is_eng else "🔊 本文を再生"
-                        if st.button(label, key=f"blk_{i}"):
-                            inject_speech_script(block["audio_target"], speech_speed, is_english=is_eng)
+            # 解説ブロック表示
+            for i, block in enumerate(res.get("explanation_blocks", [])):
+                with st.container(border=True):
+                    st.markdown(f'<div class="content-body">{block["text"].replace("\\n", "<br>")}</div>', unsafe_allow_html=True)
+                    if st.session_state.show_voice_btns:
+                        v_col1, v_col2, _ = st.columns([1, 1, 2])
+                        with v_col1:
+                            if st.button(f"▶ 再生", key=f"play_{i}"):
+                                inject_speech_script(block["audio_target"], speech_speed, is_english=is_eng)
+                        with v_col2:
+                            # リフレッシュ：音を止めて再描画し、再再生を可能にする
+                            if st.button(f"🔄 リフレッシュ", key=f"refresh_{i}"):
+                                inject_speech_script(stop=True)
+                                st.rerun()
 
-        # --- クイズセクション ---
-        st.subheader(f"📝 ブースト・チェック ({len(res['quizzes'])}問)")
+        # --- クイズセクション（エラー対策強化） ---
+        st.subheader(f"📝 ブースト・チェック")
         user_page = st.text_input("📖 ページ番号確認", value=res.get("page", ""))
         score = 0
-        for i, q in enumerate(res["quizzes"]):
-            ans = st.radio(f"問{i+1}: {q['question']} ({q['location']})", q['options'], key=f"q_{i}")
-            if q['options'].index(ans) == q['answer']: score += 1
+        quizzes = res.get("quizzes", [])
+        for i, q in enumerate(quizzes):
+            # ページ跨ぎ等でのDuplicateKeyエラー回避
+            unique_key = f"q_{i}_{st.session_state.grade}_{target_sub}"
+            ans = st.radio(f"問{i+1}: {q.get('question', '...')} ({q.get('location', '')})", q.get('options', []), key=unique_key)
+            if q.get('options') and q.get('options').index(ans) == q.get('answer', 0): score += 1
         
         if st.button("🏁 判定", use_container_width=True):
-            rate = (score / len(res["quizzes"])) * 100
+            rate = (score / len(quizzes)) * 100 if quizzes else 0
             rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
             fb = res["boost_comments"][rank]
             st.metric("正答率", f"{rate:.0f}%")
             st.success(fb["text"])
             inject_speech_script(fb["script"], speech_speed)
             
-            # ログ保存 (自由入力教科名対応)
+            # ログ保存（その他教科名の自由入力に対応）
             if target_sub not in st.session_state.history: st.session_state.history[target_sub] = []
-            st.session_state.history[target_sub].append({
-                "date": datetime.datetime.now().strftime("%m/%d %H:%M"), 
-                "page": user_page, 
-                "score": f"{rate:.0f}%"
-            })
+            st.session_state.history[target_sub].append({"date": datetime.datetime.now().strftime("%m/%d %H:%M"), "page": user_page, "score": f"{rate:.0f}%"})
+        
+        st.session_state.font_size = st.slider("🔍 文字サイズ", 14, 45, st.session_state.font_size)
 
 with tab2:
     st.header("📈 ブースト履歴")
     for sub, logs in st.session_state.history.items():
         with st.expander(f"📙 {sub} の記録"): st.table(logs)
-    if st.button("🗑️ 履歴をリセット"): st.session_state.history = {}; st.rerun()
+    if st.button("🗑️ 履歴をリセット"):
+        st.session_state.history = {}
+        st.rerun()
