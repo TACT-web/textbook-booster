@@ -99,7 +99,7 @@ if cam_image and st.button("✨ この設定で解析を開始！", use_containe
         st.error("サイドバーにAPIキーを入力してください。")
     else:
         genai.configure(api_key=user_api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-3-flash-preview')
 
         with st.status("🚀 AI先生が解析中...", expanded=True):
             st.write(f"💡 **豆知識:** {random.choice(TIPS)}")
