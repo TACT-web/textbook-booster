@@ -4,12 +4,14 @@ from PIL import Image
 import io, json, time, re, datetime
 
 # --- 基本設定 ---
-st.set_page_config(page_title="教科書ブースター V1.2", layout="centered", page_icon="🚀")
+st.set_page_config(page_title="教科書ブースター V1.1", layout="centered", page_icon="🚀")
 
 if "history" not in st.session_state: st.session_state.history = {}
 if "final_json" not in st.session_state: st.session_state.final_json = None
 if "agreed" not in st.session_state: st.session_state.agreed = False
 if "font_size" not in st.session_state: st.session_state.font_size = 18
+# 追加ステート：ブロック音声表示フラグ
+if "show_block_audio" not in st.session_state: st.session_state.show_block_audio = False
 
 # --- 添付ファイル仕様継承：教科別個別プロンプト ---
 SUBJECT_PROMPTS = {
@@ -21,12 +23,13 @@ SUBJECT_PROMPTS = {
     "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
 
-# --- 音声合成エンジン（日本語優先 / 停止機能追加） ---
-def inject_speech_script(text=None, speed=1.0, stop=False):
+# --- 音声合成エンジン（停止機能・英語判定追加） ---
+def inject_speech_script(text=None, speed=1.0, stop=False, is_english=False):
     if stop:
         js_code = "<script>window.parent.speechSynthesis.cancel();</script>"
     else:
         clean_text = text.replace('"', "'").replace("\n", " ")
+        lang = "en-US" if is_english else "ja-JP"
         js_code = f"""
         <script>
             (function() {{
@@ -34,10 +37,10 @@ def inject_speech_script(text=None, speed=1.0, stop=False):
                 const uttr = new SpeechSynthesisUtterance("{clean_text}");
                 uttr.rate = {speed};
                 const voices = window.parent.speechSynthesis.getVoices();
-                let voice = voices.find(v => v.lang === "ja-JP" && (v.name.includes("Google") || v.name.includes("Natural")));
-                if (!voice) voice = voices.find(v => v.lang.startsWith("ja"));
+                let voice = voices.find(v => v.lang === "{lang}");
+                if (!voice && "{lang}" === "ja-JP") voice = voices.find(v => v.lang.startsWith("ja"));
                 uttr.voice = voice;
-                uttr.lang = "ja-JP";
+                uttr.lang = "{lang}";
                 window.parent.speechSynthesis.speak(uttr);
             }})();
         </script>
@@ -51,7 +54,7 @@ st.markdown(f"<style>.content-body {{ font-size: {st.session_state.font_size}px;
 # 1. 冒頭：厳格な免責事項 ＆ 同意（第1条〜第3条 厳守）
 # ==========================================
 if not st.session_state.agreed:
-    st.title("🚀 教科書ブースター V1.2")
+    st.title("🚀 教科書ブースター V1.1")
     with st.container(border=True):
         st.markdown("""
         ### 【本ソフトウェア利用に関する同意事項】
@@ -95,7 +98,6 @@ tab1, tab2 = st.tabs(["📖 学習ブースト", "📈 ブースト履歴"])
 with tab1:
     subject_choice = st.selectbox("🎯 ターゲット教科", list(SUBJECT_PROMPTS.keys()))
     
-    # 追加機能：その他の教科名入力
     final_subject_name = subject_choice
     if subject_choice == "その他":
         custom_subject = st.text_input("具体的な教科名を入力してください")
@@ -104,7 +106,7 @@ with tab1:
 
     cam_file = st.camera_input("教科書をスキャン")
 
-    if cam_file and st.button("✨ ブースト開始！"):
+    if cam_file and st.button("✨ ブースト開始"):
         genai.configure(api_key=st.session_state.user_api_key)
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
@@ -129,8 +131,7 @@ with tab1:
                 "is_match": true, "detected_subject": "{final_subject_name}", "page": "数字",
                 "explanation": "解説全文([P.〇/〇行目]を含む)", 
                 "explanation_blocks": [
-                    {{"text": "ブロック1の解説内容", "audio": "ブロック1の音声台本"}},
-                    {{"text": "ブロック2の解説内容", "audio": "ブロック2の音声台本"}}
+                    {{"text": "ブロックの解説文", "audio": "音声用台本(英語なら英文のみ、他は解説)"}}
                 ],
                 "audio_script": "解説全文の台本",
                 "boost_comments": {{"high":{{"text":"..","script":".."}},"mid":{{"text":"..","script":".."}},"low":{{"text":"..","script":".."}}}},
@@ -147,6 +148,7 @@ with tab1:
             
             res_json["used_subject"] = final_subject_name
             st.session_state.final_json = res_json
+            st.session_state.show_block_audio = False # リセット
             st.rerun()
 
     if st.session_state.final_json:
@@ -155,24 +157,35 @@ with tab1:
         st.session_state.font_size = st.slider("🔍 視認性ブースト（文字サイズ）", 14, 45, st.session_state.font_size)
   
         with st.container(border=True):
-            # 追加機能：全体停止
-            if st.button("🛑 音声を止める", use_container_width=True):
-                inject_speech_script(stop=True)
+            # --- 音声コントロールセンター (近くに配置) ---
+            c_audio1, c_audio2, c_audio3 = st.columns([1, 1, 1])
+            with c_audio1:
+                if st.button("🔊 全文再生", use_container_width=True):
+                    inject_speech_script(res["audio_script"], 1.0)
+            with c_audio2:
+                if st.button("🛑 音声を止める", use_container_width=True):
+                    inject_speech_script(stop=True)
+            with c_audio3:
+                # ブロック音声の表示切り替え
+                if st.button("🎙️ ブロック別解説", use_container_width=True):
+                    st.session_state.show_block_audio = not st.session_state.show_block_audio
+
+            st.divider()
             
-            # 元の仕様：explanation全文表示
+            # 解説本文表示 (V1.1仕様)
             st.markdown(f'<div class="content-body">{res["explanation"]}</div>', unsafe_allow_html=True)
             
-            # 元の仕様：全体音声
-            if st.button("🔊 音声解説を聴く"): inject_speech_script(res["audio_script"], 1.0)
-            
-            st.divider()
-            st.write("▼ ブロック毎の音声解説")
-            # 追加機能：ブロック毎の再生（通常隠蔽）
-            for i, block in enumerate(res.get("explanation_blocks", [])):
-                with st.expander(f"🔊 ブロック{i+1}の音声を出す"):
-                    st.write(block["text"])
-                    if st.button(f"再生", key=f"play_{i}"):
-                        inject_speech_script(block["audio"])
+            # 追加機能：ブロック毎の音声ボタン（切り替え表示）
+            if st.session_state.show_block_audio:
+                st.info("💡 各ブロックの音声を再生できます")
+                for i, block in enumerate(res.get("explanation_blocks", [])):
+                    with st.container(border=True):
+                        st.write(block["text"])
+                        # 英語の場合は英語音声(en-US)として流す
+                        is_eng = (target_sub == "英語")
+                        label = "🔤 英文を聴く" if is_eng else "🔊 解説を聴く"
+                        if st.button(label, key=f"play_{i}"):
+                            inject_speech_script(block["audio"], is_english=is_eng)
 
         st.subheader("📝 ブースト・チェック")
         user_page = st.text_input("📖 ページ番号確認", value=res.get("page", ""))
