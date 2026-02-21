@@ -104,15 +104,16 @@ with tab1:
 
     cam_file = st.camera_input("教科書をスキャン")
 
-    if cam_file and st.button("✨ ブースト開始"):
+    if cam_file and st.button("✨ ナレッジ・ブースト開始"):
         genai.configure(api_key=st.session_state.user_api_key)
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         with st.status("解析中...🚀"):
             prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}担当の天才教育者です。
             
             【教科別個別ミッション: {final_subject_name}】
             {SUBJECT_PROMPTS[subject_choice]}
+            ※英語の場合は、スラッシュごとの逐語訳（直訳）を徹底し、返り読みをしない順序で[ 英文 / 訳 ]の形式を厳守せよ。
 
             【共通厳守ルール】
             1. 画像内の教科が「{final_subject_name}」に関連しない場合は is_match: false として即終了せよ。
@@ -120,8 +121,8 @@ with tab1:
             3. audio_scriptは記号や数式を自然な日本語の読み（ひらがな）に変換せよ。
             4. 正答率別のブーストメッセージ(high, mid, low)を音声台本付きで作れ。
             5. 解説は{st.session_state.age_val}歳に最適な言葉を選べ。
-            6. 内容の深さと構造: 解説の質を落とさず深く解説せよ。出力は100文字前後のブロックに分け、英語なら「英文\\n解説」の構成にせよ。
-            7. 年齢別ルビ: 相手は{st.session_state.age_val}歳。常用漢字には振らず、難読語にのみ「漢字(かんじ)」でルビを振れ。1ブロックにつきルビは最大2箇所。
+            6. 出力は100文字前後のブロックに分け、英語なら「英文\\n解説」の構成にせよ。
+            7. 年齢別ルビ: 常用漢字には振らず、難読語にのみ「漢字(かんじ)」でルビを振れ。1ブロックにつきルビは最大2箇所。
             8. 問題数指定: 練習問題(quizzes)は必ず「{st.session_state.quiz_count}問」生成すること。
 
             ###JSON形式で出力せよ###
@@ -154,10 +155,10 @@ with tab1:
         target_sub = res.get("used_subject", "不明")
         is_eng = (target_sub == "英語")
         
-        # 音声・視認性コントロール
-        speech_speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
-
+        # --- 操作パネル（音声設定・ボタン群・文字サイズを一括配置） ---
         with st.container(border=True):
+            speech_speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
+            
             col_a, col_b, col_c, col_d = st.columns(4)
             with col_a:
                 if st.button("🔊 全文再生", use_container_width=True):
@@ -170,13 +171,16 @@ with tab1:
                 if st.button(btn_label, use_container_width=True):
                     st.session_state.show_voice_btns = not st.session_state.show_voice_btns
             with col_d:
-                if is_eng and st.button("⏩ 連続再生", use_container_width=True):
+                if is_eng and st.button("⏩ 英文を連続再生", use_container_width=True):
                     eng_texts = [b["audio_target"] for b in res["explanation_blocks"]]
                     inject_speech_script(eng_texts, speech_speed, is_english=True)
 
+            # 文字サイズスライダーを音声ボタン群の下に移動
+            st.session_state.font_size = st.slider("🔍 文字サイズ調整", 14, 45, st.session_state.font_size)
+
             st.divider()
             
-            # 解説ブロック表示
+            # 解説ブロック表示（全教科共通で最初から表示）
             for i, block in enumerate(res.get("explanation_blocks", [])):
                 with st.container(border=True):
                     st.markdown(f'<div class="content-body">{block["text"].replace("\\n", "<br>")}</div>', unsafe_allow_html=True)
@@ -186,7 +190,6 @@ with tab1:
                             if st.button(f"▶ 再生", key=f"play_{i}"):
                                 inject_speech_script(block["audio_target"], speech_speed, is_english=is_eng)
                         with v_col2:
-                            # リフレッシュ：音を止めて再描画し、再再生を可能にする
                             if st.button(f"🔄 リフレッシュ", key=f"refresh_{i}"):
                                 inject_speech_script(stop=True)
                                 st.rerun()
@@ -197,9 +200,8 @@ with tab1:
         score = 0
         quizzes = res.get("quizzes", [])
         for i, q in enumerate(quizzes):
-            # ページ跨ぎ等でのDuplicateKeyエラー回避
-            unique_key = f"q_{i}_{st.session_state.grade}_{target_sub}"
-            ans = st.radio(f"問{i+1}: {q.get('question', '...')} ({q.get('location', '')})", q.get('options', []), key=unique_key)
+            q_key = f"quiz_{i}_{st.session_state.grade}_{target_sub}_{time.time()}"
+            ans = st.radio(f"問{i+1}: {q.get('question', '...')} ({q.get('location', '')})", q.get('options', []), key=q_key)
             if q.get('options') and q.get('options').index(ans) == q.get('answer', 0): score += 1
         
         if st.button("🏁 判定", use_container_width=True):
@@ -210,11 +212,8 @@ with tab1:
             st.success(fb["text"])
             inject_speech_script(fb["script"], speech_speed)
             
-            # ログ保存（その他教科名の自由入力に対応）
             if target_sub not in st.session_state.history: st.session_state.history[target_sub] = []
             st.session_state.history[target_sub].append({"date": datetime.datetime.now().strftime("%m/%d %H:%M"), "page": user_page, "score": f"{rate:.0f}%"})
-        
-        st.session_state.font_size = st.slider("🔍 文字サイズ", 14, 45, st.session_state.font_size)
 
 with tab2:
     st.header("📈 ブースト履歴")
