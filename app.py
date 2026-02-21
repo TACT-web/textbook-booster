@@ -4,7 +4,7 @@ from PIL import Image
 import io, json, time, re, datetime
 
 # --- 基本設定 ---
-st.set_page_config(page_title="教科書ブースター V1.1", layout="centered", page_icon="🚀")
+st.set_page_config(page_title="教科書ブースター V1.2", layout="centered", page_icon="🚀")
 
 if "history" not in st.session_state: st.session_state.history = {}
 if "final_json" not in st.session_state: st.session_state.final_json = None
@@ -22,7 +22,7 @@ SUBJECT_PROMPTS = {
     "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
 
-# --- 音声合成エンジン（連続再生・停止・言語切替） ---
+# --- 音声合成エンジン ---
 def inject_speech_script(text_list=None, speed=1.0, stop=False, is_english=False):
     if stop:
         js_code = "<script>window.parent.speechSynthesis.cancel();</script>"
@@ -104,7 +104,7 @@ with tab1:
 
     cam_file = st.camera_input("教科書をスキャン")
 
-    if cam_file and st.button("✨ ナレッジ・ブースト開始"):
+    if cam_file and st.button("✨ ブースト開始"):
         genai.configure(api_key=st.session_state.user_api_key)
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
@@ -124,17 +124,17 @@ with tab1:
             6. 出力は100文字前後のブロックに分け、英語なら「英文\\n解説」の構成にせよ。
             7. 年齢別ルビ: 常用漢字には振らず、難読語にのみ「漢字(かんじ)」でルビを振れ。1ブロックにつきルビは最大2箇所。
             8. 問題数指定: 練習問題(quizzes)は必ず「{st.session_state.quiz_count}問」生成すること。
+            9. クイズの解説: 各問題に短い「hint_explanation（解説）」を必ず含めること。
 
             ###JSON形式で出力せよ###
             {{
                 \"is_match\": true, \"detected_subject\": \"{final_subject_name}\", \"page\": \"数字\",
-                \"explanation\": \"解説全文\",
                 \"explanation_blocks\": [
                     {{\"text\": \"本文・英文\\n解説\", \"audio_target\": \"再生用テキスト(英語なら英文のみ)\"}}
                 ],
                 \"audio_script\": \"解説全文の台本\",
                 \"boost_comments\": {{\"high\":{{\"text\":\"..\",\"script\":\"..\"}},\"mid\":{{\"text\":\"..\",\"script\":\"..\"}},\"low\":{{\"text\":\"..\",\"script\":\"..\"}}}},
-                \"quizzes\": [{{ \"question\":\"..\", \"options\":[\"A\",\"B\",\"C\",\"D\"], \"answer\":0, \"location\":\"P.〇\" }}]
+                \"quizzes\": [{{ \"question\":\"..\", \"options\":[\"A\",\"B\",\"C\",\"D\"], \"answer\":0, \"location\":\"P.〇\", \"hint_explanation\":\"解説文\" }}]
             }}"""
             
             img = Image.open(cam_file)
@@ -155,16 +155,15 @@ with tab1:
         target_sub = res.get("used_subject", "不明")
         is_eng = (target_sub == "英語")
         
-        # --- 操作パネル（音声設定・ボタン群・文字サイズを一括配置） ---
+        # --- 操作パネル ---
         with st.container(border=True):
             speech_speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
-            
             col_a, col_b, col_c, col_d = st.columns(4)
             with col_a:
-                if st.button("🔊 全文再生", use_container_width=True):
+                if st.button("🔊 音声再生", use_container_width=True):
                     inject_speech_script(res["audio_script"], speech_speed)
             with col_b:
-                if st.button("🛑 全停止", use_container_width=True):
+                if st.button("🛑 音声停止", use_container_width=True):
                     inject_speech_script(stop=True)
             with col_c:
                 btn_label = "🎙️ 個別音声:ON" if st.session_state.show_voice_btns else "🎙️ 個別音声:OFF"
@@ -175,12 +174,9 @@ with tab1:
                     eng_texts = [b["audio_target"] for b in res["explanation_blocks"]]
                     inject_speech_script(eng_texts, speech_speed, is_english=True)
 
-            # 文字サイズスライダーを音声ボタン群の下に移動
             st.session_state.font_size = st.slider("🔍 文字サイズ調整", 14, 45, st.session_state.font_size)
-
             st.divider()
             
-            # 解説ブロック表示（全教科共通で最初から表示）
             for i, block in enumerate(res.get("explanation_blocks", [])):
                 with st.container(border=True):
                     st.markdown(f'<div class="content-body">{block["text"].replace("\\n", "<br>")}</div>', unsafe_allow_html=True)
@@ -191,34 +187,52 @@ with tab1:
                                 inject_speech_script(block["audio_target"], speech_speed, is_english=is_eng)
                         with v_col2:
                             if st.button(f"🔄 リフレッシュ", key=f"refresh_{i}"):
-                                inject_speech_script(stop=True)
-                                st.rerun()
+                                inject_speech_script(stop=True); st.rerun()
 
-        # --- クイズセクション（エラー対策強化） ---
+        # --- クイズセクション（一問一答・案B） ---
         st.subheader(f"📝 ブースト・チェック")
         user_page = st.text_input("📖 ページ番号確認", value=res.get("page", ""))
-        score = 0
         quizzes = res.get("quizzes", [])
+        score = 0
+        answered_count = 0
+
         for i, q in enumerate(quizzes):
-            q_key = f"quiz_{i}_{st.session_state.grade}_{target_sub}_{time.time()}"
-            ans = st.radio(f"問{i+1}: {q.get('question', '...')} ({q.get('location', '')})", q.get('options', []), key=q_key)
-            if q.get('options') and q.get('options').index(ans) == q.get('answer', 0): score += 1
-        
-        if st.button("🏁 判定", use_container_width=True):
-            rate = (score / len(quizzes)) * 100 if quizzes else 0
-            rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
-            fb = res["boost_comments"][rank]
-            st.metric("正答率", f"{rate:.0f}%")
-            st.success(fb["text"])
-            inject_speech_script(fb["script"], speech_speed)
+            # Keyを固定して回答消失を防止
+            q_id = f"q_fixed_{i}_{final_subject_name}"
+            ans = st.radio(f"問{i+1}: {q.get('question')} ({q.get('location')})", q.get('options'), key=q_id, index=None)
             
-            if target_sub not in st.session_state.history: st.session_state.history[target_sub] = []
-            st.session_state.history[target_sub].append({"date": datetime.datetime.now().strftime("%m/%d %H:%M"), "page": user_page, "score": f"{rate:.0f}%"})
+            if ans:
+                answered_count += 1
+                correct_idx = q.get('answer')
+                correct_val = q.get('options')[correct_idx]
+                if ans == correct_val:
+                    st.success(f"⭕ 正解！")
+                    score += 1
+                else:
+                    st.error(f"❌ 残念。正解は「{correct_val}」です。")
+                st.info(f"💡 解説: {q.get('hint_explanation')}")
+
+        # 最終判定ボタン（全問回答後に強調表示）
+        if answered_count == len(quizzes) and len(quizzes) > 0:
+            if st.button("🏁 最終結果を記録する", use_container_width=True, type="primary"):
+                rate = (score / len(quizzes)) * 100
+                rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
+                fb = res["boost_comments"][rank]
+                st.metric("今回の達成率", f"{rate:.0f}%")
+                st.success(fb["text"])
+                inject_speech_script(fb["script"], speech_speed)
+                
+                # 日本時間（JST）で記録
+                jst_now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+                if target_sub not in st.session_state.history: st.session_state.history[target_sub] = []
+                st.session_state.history[target_sub].append({
+                    "date": jst_now.strftime("%m/%d %H:%M"),
+                    "page": user_page,
+                    "score": f"{rate:.0f}%"
+                })
 
 with tab2:
-    st.header("📈 ブースト履歴")
+    st.header("📈 ブースト履歴 (JST)")
     for sub, logs in st.session_state.history.items():
         with st.expander(f"📙 {sub} の記録"): st.table(logs)
-    if st.button("🗑️ 履歴をリセット"):
-        st.session_state.history = {}
-        st.rerun()
+    if st.button("🗑️ 履歴をリセット"): st.session_state.history = {}; st.rerun()
