@@ -45,16 +45,20 @@ st.markdown("""
 if "final_json" not in st.session_state: st.session_state.final_json = None
 if "explanation" not in st.session_state: st.session_state.explanation = ""
 if "agreed" not in st.session_state: st.session_state.agreed = False
+if "user_api_key" not in st.session_state: st.session_state.user_api_key = ""
 
-# --- ② サイドバー（APIキー入力のみ） ---
-with st.sidebar:
-    st.title("⚙️ セキュリティ")
-    user_api_key = st.text_input("Gemini API Keyを入力", type="password")
+# サイドバーは完全にクリーンに（必要なら後で追加可能）
+st.sidebar.title("🚀 教科書ブースター")
 
-# --- A. 同意画面 ＆ 学習者設定（一括画面） ---
+# --- A. 初期設定 ＆ 同意画面 ＆ APIキー入力（一括統合） ---
 if not st.session_state.agreed:
     st.markdown('<div class="main-title">🚀 教科書ブースター V10.4</div>', unsafe_allow_html=True)
-    st.error("### ⚠️ 【重要】著作権同意と初期設定")
+    st.error("### ⚠️ 最初に設定と同意をお願いします")
+    
+    # 🔑 APIキー入力を最上部に配置
+    st.session_state.user_api_key = st.text_input("🔑 Gemini API Keyを入力", type="password", placeholder="AIzaSy...")
+    
+    st.divider()
     
     col_a, col_b = st.columns(2)
     with col_a:
@@ -70,67 +74,66 @@ if not st.session_state.agreed:
     st.markdown("""---
     **【著作権同意事項】**
     1. **私的使用の範囲内**: 本人学習のみに使用すること。
-    2. **公衆送信の禁止**: 解析結果をSNS等にアップロードしないこと。
+    2. **公衆送信の禁止**: 解析結果を外部にアップロードしないこと。
     3. **再配布の禁止**: AI回答を配布・商用利用しないこと。
     """)
     
     if st.button("✅ 設定を保存して学習を開始", use_container_width=True):
-        st.session_state.agreed = True
-        st.rerun()
+        if not st.session_state.user_api_key:
+            st.warning("APIキーを入力してください。")
+        else:
+            st.session_state.agreed = True
+            st.rerun()
     st.stop()
 
-st.markdown('<div class="law-notice">⚠️ <b>無断転載・公衆送信禁止</b><br>解析結果はあなたのデバイス内でのみ使用可能です。</div>', unsafe_allow_html=True)
+# --- B. メイン画面：教科指定 ＆ 撮影 ---
+st.markdown('<div class="law-notice">⚠️ <b>無断転載・公衆送信禁止</b></div>', unsafe_allow_html=True)
 
-# --- B. 教科指定 ＆ 撮影（アイコン復活のために標準構成に） ---
-st.markdown('<div class="section-container"><div class="section-band band-green">📸 ステップ1：教科指定と撮影</div><div class="content-body">', unsafe_allow_html=True)
+st.markdown('<div class="section-container"><div class="section-band band-green">📸 教科指定と撮影</div><div class="content-body">', unsafe_allow_html=True)
 
-# 写真の直前に教科指定を配置
-subject = st.selectbox("🎯 何の教科を勉強しますか？", ["英語", "国語", "数学", "理科", "社会", "その他"])
+subject = st.selectbox("🎯 教科を選択", ["英語", "国語", "数学", "理科", "社会", "その他"])
 
 st.write("👇 教科書を撮影してください（切り替えアイコン🔄で背面カメラを選択）")
-# 敢えて背面強制パラメータを外すことでブラウザ標準のUI（切り替えボタン）を復活させる
-cam_image = st.camera_input("カメラを起動")
+# カメラ切り替えアイコンが出るよう、標準構成を維持
+cam_image = st.camera_input("カメラ起動")
 
 st.markdown('</div></div>', unsafe_allow_html=True)
 
-# --- C. 解析（プロンプト完全維持） ---
-if cam_image and st.button("✨ この設定で解析を開始！", use_container_width=True):
-    if not user_api_key:
-        st.error("サイドバーにAPIキーを入力してください。")
-    else:
-        genai.configure(api_key=user_api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        with st.status("🚀 AI先生が解析中...", expanded=True):
-            subjects_map = {
-                "国語": "論理構造（序破急など）を分解し、筆者の主張を明確にしてください。なぜその結論に至ったか、本文の接続詞などを根拠に論理的に説明してください。",
-                "数学": "公式の根拠を重視し、計算過程を一行ずつ省略せず論理的に解説してください。単なる手順ではなく『なぜこの解法を選ぶのか』という思考の起点を言語化してください。",
-                "英語": "英文を意味の塊（/）で区切るスラッシュリーディング形式（英文 / 訳）を徹底してください。重要な文法構造や熟語についても触れてください。",
-                "理科": "現象のメカニズムを原理・法則から説明してください。図表がある場合は、軸の意味や数値の変化が示す本質を読み解き、日常の具体例を添えてください。",
-                "社会": "歴史的背景と現代の繋がりをストーリー化してください。単なる事実の羅列ではなく『なぜこの出来事が起きたのか』という因果関係を重視して解説してください。",
-                "その他": "画像内容を客観的に観察し、要点を3つのポイントに整理して解説してください。"
-            }
-            
-            full_prompt = f"""あなたは【{st.session_state.school_type} {st.session_state.grade}】の内容を【{st.session_state.age_val}歳】に教える天才教師です。
+# --- C. 解析（最強プロンプト・全仕様） ---
+if cam_image and st.button("✨ 解析を開始！", use_container_width=True):
+    genai.configure(api_key=st.session_state.user_api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    with st.status("🚀 AI先生が解析中...", expanded=True):
+        subjects_map = {
+            "国語": "論理構造（序破急など）を分解し、筆者の主張を明確にしてください。なぜその結論に至ったか、本文の接続詞などを根拠に論理的に説明してください。",
+            "数学": "公式の根拠を重視し、計算過程を一行ずつ省略せず論理的に解説してください。単なる手順ではなく『なぜこの解法を選ぶのか』という思考の起点を言語化してください。",
+            "英語": "英文を意味の塊（/）で区切るスラッシュリーディング形式（英文 / 訳）を徹底してください。重要な文法構造や熟語についても触れてください。",
+            "理科": "現象のメカニズムを原理・法則から説明してください。図表がある場合は、軸の意味や数値の変化が示す本質を読み解き、日常の具体例を添えてください。",
+            "社会": "歴史的背景と現代の繋がりをストーリー化してください。単なる事実の羅列ではなく『なぜこの出来事が起きたのか』という因果関係を重視して解説してください。",
+            "その他": "画像内容を客観的に観察し、要点を3つのポイントに整理して解説してください。"
+        }
+        
+        full_prompt = f"""あなたは【{st.session_state.school_type} {st.session_state.grade}】の内容を【{st.session_state.age_val}歳】に教える天才教師です。提供された画像の内容のみに基づき、正確に指導してください。
 【教科別指示（{subject}）】{subjects_map.get(subject, "")}
-【ルール】ルビ対応、根拠[〇行目]明示、構成（要約/重要語句/解説）。
-最後に ###JSON### の後に{st.session_state.quiz_count}問のJSONを出力。
+【絶対遵守】ルビ対応、根拠[〇行目]明示、構成（要約/重要語句/解説）。
+最後に ###JSON### の後に{st.session_state.quiz_count}問作成。
 ###JSON###
 {{"quizzes": [{{"question": "問題", "options": ["A","B","C","D"], "answer": 0, "line": "〇行目"}}]}}"""
 
-            try:
-                img = Image.open(cam_image)
-                response = model.generate_content([full_prompt, img])
-                res_text = response.text
-                if "###JSON###" in res_text:
-                    st.session_state.explanation, json_part = res_text.split("###JSON###")
-                    json_match = re.search(r"\{.*\}", json_part, re.DOTALL)
-                    if json_match: st.session_state.final_json = json.loads(json_match.group())
-                else:
-                    st.session_state.explanation = res_text
-                st.rerun()
-            except Exception as e: st.error(f"解析エラー: {e}")
+        try:
+            img = Image.open(cam_image)
+            response = model.generate_content([full_prompt, img])
+            res_text = response.text
+            if "###JSON###" in res_text:
+                st.session_state.explanation, json_part = res_text.split("###JSON###")
+                json_match = re.search(r"\{.*\}", json_part, re.DOTALL)
+                if json_match: st.session_state.final_json = json.loads(json_match.group())
+            else:
+                st.session_state.explanation = res_text
+            st.rerun()
+        except Exception as e: st.error(f"解析エラー: {e}")
 
-# --- D/E. 解説 ＆ 再生 ＆ 練習問題（全機能復元） ---
+# --- D. 解説表示 & 再生機能 ---
 if st.session_state.explanation:
     st.markdown('<div class="section-container"><div class="section-band band-blue">👨‍🏫 AI先生の徹底解説</div><div class="content-body">', unsafe_allow_html=True)
     speed = st.slider("🔊 速度", 0.5, 2.0, 1.0)
@@ -143,12 +146,13 @@ if st.session_state.explanation:
     sentences = re.split(r'(?<=[。？！])\s*', st.session_state.explanation)
     for i, s in enumerate(sentences):
         if s.strip():
-            c_text, c_btn = st.columns([0.9, 0.1])
-            with c_text: st.markdown(s)
-            with c_btn:
+            cols = st.columns([0.9, 0.1])
+            with cols[0]: st.markdown(s)
+            with cols[1]:
                 if st.button("▶", key=f"v_{i}"): inject_speech_script(s, speed)
     st.markdown('</div></div>', unsafe_allow_html=True)
 
+# --- E. 練習問題 ---
 if st.session_state.final_json:
     st.markdown('<div class="section-container"><div class="section-band band-pink">📝 練習問題</div><div class="content-body">', unsafe_allow_html=True)
     for i, q in enumerate(st.session_state.final_json.get("quizzes", [])):
@@ -157,6 +161,7 @@ if st.session_state.final_json:
         if st.button(f"答え合わせ 問{i+1}", key=f"b_{i}"):
             if q['options'].index(ans) == q['answer']: st.success(f"正解！⭕ ({q['line']})")
             else: st.error(f"不正解❌ 正解は: {q['options'][q['answer']]} ({q['line']})")
+    
     if st.button("🗑️ 学習を終了して戻る", use_container_width=True):
         st.session_state.final_json = st.session_state.explanation = None
         st.rerun()
