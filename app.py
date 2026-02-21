@@ -6,12 +6,11 @@ import io, json, time, re, random
 # ==========================================
 # ① 基本設定 & デザイン & 音声エンジン
 # ==========================================
-st.set_page_config(page_title="教科書ブースター V10.4", layout="centered", page_icon="🚀")
+st.set_page_config(page_title="教科書ブースター V10.5", layout="centered", page_icon="🚀")
 
 def inject_speech_script(text, speed):
-    # ルビ「漢字(かんじ)」のカッコ内を除去する正規表現を強化
+    # 音声読み上げ時にルビ「漢字(かんじ)」のカッコ内を完全に除去する強化版
     clean_text = re.sub(r'\(.*?\)', '', text)
-    # その他の記号や改行をクリーンアップ
     clean_text = re.sub(r'\[.*?行目\]|[*#/]', '', clean_text).replace('"', "'").replace("\n", " ")
     
     is_english = len(re.findall(r'[a-zA-Z]', clean_text)) > (len(clean_text) / 2)
@@ -51,30 +50,22 @@ if "final_json" not in st.session_state: st.session_state.final_json = None
 if "explanation" not in st.session_state: st.session_state.explanation = ""
 if "agreed" not in st.session_state: st.session_state.agreed = False
 
-# --- A. 初期設定 ＆ 同意画面（一括統合） ---
+# --- A. 初期設定 ＆ 著作権保護同意（一括統合画面） ---
 if not st.session_state.agreed:
-    st.markdown('<div class="main-title">🚀 教科書ブースター V10.4</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">🚀 教科書ブースター V10.5</div>', unsafe_allow_html=True)
+    st.markdown('<div class="agree-text">最初に個人設定と<br>著作権保護の同意を<br>お願いします。</div>', unsafe_allow_html=True)
     
-    # 視認性を高めた3行メッセージ
-    st.markdown("""
-    <div class="agree-text">
-        最初に個人設定と<br>
-        著作権保護の同意を<br>
-        お願いします。
-    </div>
-    """, unsafe_allow_html=True)
-    
-    user_api_key = st.text_input("🔑 Gemini API Keyを入力 (使用モデル: gemini-2.0-flash)", type="password", placeholder="AIzaSy...")
+    # APIキー入力（モデル名明記）
+    user_api_key = st.text_input("🔑 Gemini API Keyを入力 ", type="password", placeholder="AIzaSy...")
     
     st.divider()
-    
     col_a, col_b = st.columns(2)
     with col_a:
         st.session_state.school_type = st.selectbox("② あなたの学校は？", ["小学生", "中学生", "高校生", "大学生・社会人"])
         st.session_state.grade = st.selectbox("③ 今何年生？", ["1年生", "2年生", "3年生", "4年生", "5年生", "6年生", "なし"])
     with col_b:
         st.session_state.age_val = st.select_slider("④ 何歳レベルで解説する？", options=list(range(7, 26)), value=15)
-        st.session_state.quiz_count = st.selectbox("⑤ 練習問題の数", [5, 10, 15, 20], index=2) # デフォルト15問
+        st.session_state.quiz_count = st.selectbox("⑤ 練習問題の数", [5, 10, 15, 20], index=2)
     
     st.session_state.mode = st.radio("⑥ 今日の解説スタイルは？", ["解説のみ", "対話形式", "自由入力"], horizontal=True)
     st.session_state.custom_style = st.text_input("具体的リクエスト", "") if st.session_state.mode == "自由入力" else ""
@@ -91,8 +82,7 @@ if not st.session_state.agreed:
     """, unsafe_allow_html=True)
     
     if st.button("✅ 設定と著作権事項に同意して開始", use_container_width=True):
-        if not user_api_key:
-            st.warning("APIキーを入力してください。")
+        if not user_api_key: st.warning("APIキーを入力してください。")
         else:
             st.session_state.user_api_key = user_api_key
             st.session_state.agreed = True
@@ -101,42 +91,40 @@ if not st.session_state.agreed:
 
 # --- B. メイン画面：教科指定 ＆ 撮影 ---
 st.markdown('<div class="law-notice">⚠️ <b>無断転載・公衆送信禁止</b>：解析結果の外部公開は法律で禁じられています。</div>', unsafe_allow_html=True)
-
 st.markdown('<div class="section-container"><div class="section-band band-green">📸 教科指定と撮影</div><div class="content-body">', unsafe_allow_html=True)
 
 subject = st.selectbox("🎯 学習する教科を選択してください", ["英語", "国語", "数学", "理科", "社会", "その他"])
 
 st.write("👇 教科書を撮影してください")
-st.caption("（切り替えアイコン🔄が表示される場合は、<br>タップして背面カメラを選択してください）", unsafe_allow_html=True)
+st.write("<small>（切り替えアイコン🔄が表示される場合は、タップして背面カメラを選択してください）</small>", unsafe_allow_html=True)
 
 cam_image = st.camera_input("カメラ起動", label_visibility="collapsed")
-
 st.markdown('</div></div>', unsafe_allow_html=True)
 
-# --- C. 解析（Gemini 2.0 Flash 指定） ---
+# --- C. 解析（Gemini 2.0 Flash・意味ブロック化プロンプト） ---
 if cam_image and st.button("✨ AI先生の解析をリクエスト", use_container_width=True):
     genai.configure(api_key=st.session_state.user_api_key)
-    # 3-flash-previewの後継である2.0-flashを指定
     model = genai.GenerativeModel('gemini-3-flash-preview')
-    with st.status("🚀 最先端AIが教科書を読み解いています...", expanded=True):
+    with st.status("🚀 AI先生が深い解説を作成中...", expanded=True):
         subjects_map = {
-            "国語": "論理構造を分解し、筆者の主張を接続詞などの根拠に基づき論理的に説明してください。",
-            "数学": "公式の根拠を重視し、計算過程を一行ずつ省略せず、なぜその解法を選ぶのかを言語化してください。",
-            "英語": "スラッシュリーディング形式（英文 / 訳）を徹底し、重要な文法や熟語を解説してください。",
-            "理科": "現象のメカニズムを原理・法則から説明し、日常の具体例を添えてください。",
-            "社会": "歴史的背景と現代の繋がりをストーリー化し、因果関係を重視して解説してください。",
-            "その他": "要点を3つのポイントに整理して分かりやすく解説してください。"
+            "国語": "論理構造を分解し筆者の主張を説明。",
+            "数学": "計算過程を省略せず、なぜその解法か思考の起点を言語化。",
+            "英語": "スラッシュリーディング（英文 / 訳）を徹底。",
+            "理科": "原理・法則から説明し日常の具体例を提示。",
+            "社会": "歴史的背景と現代の繋がりをストーリー化。",
+            "その他": "要点を3つのポイントに整理。"
         }
         
         full_prompt = f"""あなたは【{st.session_state.school_type} {st.session_state.grade}】の内容を【{st.session_state.age_val}歳】に教える天才教師です。
 【教科別指示（{subject}）】{subjects_map.get(subject, "")}
-【絶対遵守】
-1. ルビ：{st.session_state.age_val}歳向けに全ての未習漢字へ「漢字(かんじ)」の形式でルビを振る。
-2. 根拠：本文の該当箇所を **[〇行目]** と太字で示す。
-3. 構成：【要約】【重要語句】【解説】の順。
-4. 練習問題：解説内には書かず、最後に ###JSON### の後に必ず【{st.session_state.quiz_count}問】作成すること。
+【絶対遵守ルール】
+1. **内容の深さと構造**: 解説の質を落とさず深く解説せよ。ただし、出力は100文字前後の「意味のまとまり（ブロック）」ごとに改行して構成すること。
+2. **年齢別ルビ**: 相手は{st.session_state.age_val}歳。学年相当の既習漢字を考慮し、未習漢字や難読語にのみ「漢字(かんじ)」でルビを振る。
+3. **根拠**: **[〇行目]**と太字で明示。
+4. **構成**: 【要約】【重要語句】【解説】。
+5. **練習問題**: 最後に ###JSON### の後に必ず【{st.session_state.quiz_count}問】作成。
 ###JSON###
-{{"quizzes": [{{"question": "問題文", "options": ["選1","選2","選3","選4"], "answer": 0, "line": "〇行目"}}]}}"""
+{{"quizzes": [{{"question": "問題", "options": ["A","B","C","D"], "answer": 0, "line": "〇行目"}}]}}"""
 
         try:
             img = Image.open(cam_image)
@@ -146,12 +134,11 @@ if cam_image and st.button("✨ AI先生の解析をリクエスト", use_contai
                 st.session_state.explanation, json_part = res_text.split("###JSON###")
                 json_match = re.search(r"\{.*\}", json_part, re.DOTALL)
                 if json_match: st.session_state.final_json = json.loads(json_match.group())
-            else:
-                st.session_state.explanation = res_text
+            else: st.session_state.explanation = res_text
             st.rerun()
         except Exception as e: st.error(f"解析エラー: {e}")
 
-# --- D. 解説表示 & 再生機能（部分音声はボタン格納型） ---
+# --- D. 解説表示 & 音声再生（個別音声スイッチ式） ---
 if st.session_state.explanation:
     st.markdown('<div class="section-container"><div class="section-band band-blue">👨‍🏫 AI先生の徹底解説</div><div class="content-body">', unsafe_allow_html=True)
     speed = st.slider("🔊 読み上げ速度", 0.5, 2.0, 1.0)
@@ -161,34 +148,34 @@ if st.session_state.explanation:
     with c2:
         if st.button("⏹ 停止", use_container_width=True): st.components.v1.html("<script>window.parent.speechSynthesis.cancel();</script>", height=0)
     
-    st.divider()
+    # 個別音声スイッチ（視認性のための新機能）
+    show_individual = st.checkbox("🎯 個別音声ボタンを表示する", value=False)
     
-    # 文章ごとに分割
-    sentences = re.split(r'(?<=[。？！])\s*', st.session_state.explanation)
-    for i, s in enumerate(sentences):
-        if s.strip():
-            # 部分読み上げをボタン内に隠す（視認性向上）
-            with st.expander(s, expanded=True):
-                if st.button("🔊 この文を聴く", key=f"v_{i}"):
-                    inject_speech_script(s, speed)
+    st.divider()
+    # 段落（ブロック）ごとに分割
+    paragraphs = [p.strip() for p in st.session_state.explanation.split('\n') if p.strip()]
+    for i, p in enumerate(paragraphs):
+        if show_individual:
+            col_txt, col_btn = st.columns([0.85, 0.15])
+            with col_txt: st.markdown(p)
+            with col_btn:
+                if st.button("🔊", key=f"p_{i}"): inject_speech_script(p, speed)
+        else:
+            st.markdown(p)
     st.markdown('</div></div>', unsafe_allow_html=True)
 
-# --- E. 練習問題（修正・安定化） ---
+# --- E. 練習問題 ---
 if st.session_state.final_json:
     st.markdown('<div class="section-container"><div class="section-band band-pink">📝 練習問題</div><div class="content-body">', unsafe_allow_html=True)
-    quizzes = st.session_state.final_json.get("quizzes", [])
-    for i, q in enumerate(quizzes):
-        st.write(f"**問{i+1}: {q.get('question', '')}**")
+    for i, q in enumerate(st.session_state.final_json.get("quizzes", [])):
+        st.write(f"**問{i+1}: {q.get('question')}**")
         opts = q.get('options', ["A", "B", "C", "D"])
-        ans = st.radio(f"選択 (問{i+1})", opts, key=f"q_{i}", label_visibility="collapsed")
-        if st.button(f"答え合わせ (問{i+1})", key=f"b_{i}"):
-            correct_idx = q.get('answer', 0)
-            if opts.index(ans) == correct_idx:
-                st.success(f"正解！⭕ ({q.get('line', '')})")
-            else:
-                st.error(f"不正解❌ 正解は: {opts[correct_idx]} ({q.get('line', '')})")
+        ans = st.radio(f"選択 問{i+1}", opts, key=f"q_{i}", label_visibility="collapsed")
+        if st.button(f"答え合わせ 問{i+1}", key=f"b_{i}"):
+            if opts.index(ans) == q.get('answer'): st.success(f"正解！⭕ ({q.get('line')})")
+            else: st.error(f"不正解❌ 正解は: {opts[q.get('answer')]} ({q.get('line')})")
     
-    if st.button("🗑️ 学習をリセットして最初に戻る", use_container_width=True):
+    if st.button("🗑️ 学習をリセットして戻る", use_container_width=True):
         st.session_state.final_json = st.session_state.explanation = None
         st.rerun()
     st.markdown('</div></div>', unsafe_allow_html=True)
