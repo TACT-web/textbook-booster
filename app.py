@@ -73,7 +73,7 @@ if not st.session_state.agreed:
             st.session_state.grade = st.selectbox("学年", [f"{i}年生" for i in range(1, 7)])
         with c2:
             st.session_state.age_val = st.slider("解説ターゲット年齢", 7, 20, 15)
-            st.session_state.quiz_count = st.selectbox("問題数", [10, 15, 20，25])
+            st.session_state.quiz_count = st.selectbox("問題数", [10, 15, 20, 25])
 
         if st.button("🚀 ブーストを開始する", use_container_width=True):
             if api_key:
