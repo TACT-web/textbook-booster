@@ -4,7 +4,7 @@ from PIL import Image
 import io, json, time, re, datetime
 
 # --- 基本設定 ---
-st.set_page_config(page_title="教科書ブースター V10.7", layout="centered", page_icon="🚀")
+st.set_page_config(page_title="教科書ブースター V1.1", layout="centered", page_icon="🚀")
 
 if "history" not in st.session_state: st.session_state.history = {}
 if "final_json" not in st.session_state: st.session_state.final_json = None
@@ -47,7 +47,7 @@ st.markdown(f"<style>.content-body {{ font-size: {st.session_state.font_size}px;
 # 1. 冒頭：厳格な免責事項 ＆ 同意（第1条〜第3条 厳守）
 # ==========================================
 if not st.session_state.agreed:
-    st.title("🚀 教科書ブースター V10.7")
+    st.title("🚀 教科書ブースター V1.1")
     with st.container(border=True):
         st.markdown("""
         ### 【本ソフトウェア利用に関する同意事項】
@@ -73,7 +73,7 @@ if not st.session_state.agreed:
             st.session_state.grade = st.selectbox("学年", [f"{i}年生" for i in range(1, 7)])
         with c2:
             st.session_state.age_val = st.slider("解説ターゲット年齢", 7, 20, 15)
-            st.session_state.quiz_count = st.selectbox("問題数", [3, 5, 10])
+            st.session_state.quiz_count = st.selectbox("問題数", [10, 15, 20，25])
 
         if st.button("🚀 ブーストを開始する", use_container_width=True):
             if api_key:
