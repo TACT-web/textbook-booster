@@ -104,7 +104,7 @@ st.markdown('</div></div>', unsafe_allow_html=True)
 # --- C. 解析（Gemini 2.0 Flash・意味ブロック化プロンプト） ---
 if cam_image and st.button("✨ AI先生の解析をリクエスト", use_container_width=True):
     genai.configure(api_key=st.session_state.user_api_key)
-    model = genai.GenerativeModel('gemini-3-flash-preview')
+    model = genai.GenerativeModel('gemini-2.0-flash')
     with st.status("🚀 AI先生が深い解説を作成中...", expanded=True):
         subjects_map = {
             "国語": "論理構造を分解し筆者の主張を説明。",
