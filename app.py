@@ -116,7 +116,7 @@ with tab1:
 
     if img_file and st.button("✨ ブースト開始", use_container_width=True):
         genai.configure(api_key=st.session_state.user_api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash') # 最新の推奨モデル
+        model = genai.GenerativeModel('gemini-3-flash-preview') # 最新の推奨モデル
         
         with st.status("解析中...🚀"):
             # 画像リサイズ処理
