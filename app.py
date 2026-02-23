@@ -4,34 +4,26 @@ from PIL import Image
 import io, json, time, re, datetime, gc
 
 # --- 基本設定 ---
-APP_TITLE = "教科書ブースター 🚀"
-st.set_page_config(page_title=APP_TITLE, layout="centered", page_icon="🚀")
-
-# アイコン背景白・ホーム画面名固定（iPad/Android用）
-st.markdown(f"""
-    <head>
-        <meta name="apple-mobile-web-app-title" content="{APP_TITLE}">
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="default">
-        <meta name="theme-color" content="#FFFFFF">
-        <link rel="apple-touch-icon" href="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f680.png">
-    </head>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="教科書ブースター V1.2", layout="centered", page_icon="🚀")
 
 if "history" not in st.session_state: st.session_state.history = {}
 if "final_json" not in st.session_state: st.session_state.final_json = None
 if "agreed" not in st.session_state: st.session_state.agreed = False
 if "font_size" not in st.session_state: st.session_state.font_size = 18
-if "show_voice_btns" not in st.session_state: st.session_state.show_voice_btns = False
 
 st.markdown(f"""
     <style>
     .content-body {{ font-size: {st.session_state.font_size}px !important; line-height: 1.6; }}
     .stTitle {{ font-size: 1.7rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    /* Silk/Safari用カスタムボタンのスタイル */
+    .silk-btn {{
+        background-color: #ff4b4b; color: white; border: none; padding: 10px 20px;
+        border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; margin-bottom: 10px;
+    }}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 教科別個別プロンプト（【完全再現】一言一句変更なし） ---
+# --- 教科別個別プロンプト（完全再現） ---
 SUBJECT_PROMPTS = {
     "英語": "英文を意味の塊（/）で区切るスラッシュリーディング形式（英文 / 訳）を徹底してください。重要な文法構造や熟語についても触れてください。",
     "数学": "公式の根拠を重視し、計算過程を一行ずつ省略せず論理的に解説してください。単なる手順ではなく『なぜこの解法を選ぶのか』という思考の起点を言語化してください。",
@@ -41,43 +33,24 @@ SUBJECT_PROMPTS = {
     "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
 
-# --- 音声合成エンジン（Silk/Safari ユーザー操作イベント連動強化版） ---
-def inject_speech_script(text_list=None, speed=1.0, stop=False, is_english=False):
-    if stop:
-        js_code = "<script>window.parent.speechSynthesis.cancel();</script>"
-    else:
-        if isinstance(text_list, str): text_list = [text_list]
-        json_texts = json.dumps(text_list, ensure_ascii=False)
-        lang = "en-US" if is_english else "ja-JP"
-        js_code = f"""
-        <script>
-            (function() {{
-                const synth = window.parent.speechSynthesis;
-                const texts = {json_texts};
-                const lang = "{lang}";
-                const speed = {speed};
-                
-                const speakNow = () => {{
-                    synth.cancel();
-                    texts.forEach((txt) => {{
-                        const uttr = new SpeechSynthesisUtterance(txt.replace(/\\\\n/g, ' '));
-                        uttr.rate = speed;
-                        uttr.lang = lang;
-                        synth.speak(uttr);
-                    }});
-                }};
-
-                if (synth.getVoices().length === 0) {{
-                    synth.onvoiceschanged = speakNow;
-                }}
-                speakNow();
-            }})();
-        </script>
-        """
-    st.components.v1.html(js_code, height=0, width=0)
+# --- Silk/Safari完全対応：直結型音声再生コンポーネント ---
+def silk_voice_button(label, text, speed=1.0, lang="ja-JP"):
+    # JS内の改行や引用符をエスケープ
+    safe_text = text.replace("'", "\\'").replace("\n", " ")
+    html_code = f"""
+    <button class="silk-btn" onclick="
+        const synth = window.parent.speechSynthesis;
+        synth.cancel();
+        const uttr = new SpeechSynthesisUtterance('{safe_text}');
+        uttr.rate = {speed};
+        uttr.lang = '{lang}';
+        synth.speak(uttr);
+    ">{label}</button>
+    """
+    st.components.v1.html(html_code, height=60)
 
 # ==========================================
-# 1. 冒頭：免責事項 ＆ 同意（【完全再現】一言一句変更なし）
+# 1. 冒頭：免責事項 ＆ 同意（完全再現）
 # ==========================================
 if not st.session_state.agreed:
     st.title("🚀 教科書ブースター V1.2")
@@ -89,7 +62,7 @@ if not st.session_state.agreed:
         利用者は、本アプリで取り扱う教科書等の著作物が著作権法により保護されていることを認識し、解析結果等を権利者の許可なく第三者に公開（SNS、ブログ等への掲載）してはならないものとします。
         
         **第2条（AI生成物の正確性と免責）**
-        本アプリが提供する解説および回答は、人工知能による推論に基づくものであり、その正確性、完全性、妥当性を保証するものではありません。生成された内容に起因する学習上の不利益や損害について、開発者は一切の責任を負いません。
+        本アプリが提供する解説および回答は、人工知能による推論に基づくものであり、その正確性、完全性、妥当性を保証するものではありません。生成された内容に起になる学習上の不利益や損害について、開発者は一切の責任を負いません。
         
         **第3条（利用目的）**
         本アプリは利用者の私的な学習補助を目的として提供されるものです。試験等の最終的な確認は、必ず公式な教材および指導者の指示に従ってください。
@@ -97,7 +70,7 @@ if not st.session_state.agreed:
         agree_check = st.checkbox("上記の内容を理解し、すべての条項に同意します。")
 
     if agree_check:
-        with st.form("init_settings"):
+        with st.form("settings"):
             st.subheader("🛠️ 学習ブースト設定")
             api_key = st.text_input("Gemini API Key", type="password")
             c1, c2 = st.columns(2)
@@ -136,12 +109,11 @@ with tab1:
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
         with st.status("解析中...🚀"):
-            # 【iPadメモリ対策】バイナリ段階でリサイズし、生データを破棄
+            # 【iPad/Silkメモリ対策】
             raw_bytes = cam_file.read()
             img_pill = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
             img_pill.thumbnail((1024, 1024), Image.LANCZOS)
             
-            # プロンプト（【完全再現】一言一句変更なし）
             prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}担当の天才教育者です。
             
             【教科別個別ミッション: {final_subject_name}】
@@ -172,59 +144,43 @@ with tab1:
             }}"""
             
             res_raw = model.generate_content([prompt, img_pill])
-            # メモリ即時解放
             del img_pill, raw_bytes; gc.collect()
             
-            json_match = re.search(r"\{.*\}", res_raw.text, re.DOTALL)
-            if json_match:
-                res_json = json.loads(json_match.group())
-                res_json["used_subject"] = final_subject_name
-                st.session_state.final_json = res_json
-                st.session_state.show_voice_btns = (final_subject_name == "英語")
-                st.rerun()
-            else:
-                st.error("解析エラーが発生しました。もう一度お試しください。")
+            res_json = json.loads(re.search(r"\{.*\}", res_raw.text, re.DOTALL).group())
+            res_json["used_subject"] = final_subject_name
+            st.session_state.final_json = res_json
+            st.rerun()
 
     if st.session_state.final_json:
         res = st.session_state.final_json
-        speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
-        col_v1, col_v2, col_v3 = st.columns(3)
-        with col_v1: 
-            if st.button("🔊 全文再生", use_container_width=True): inject_speech_script(res["audio_script"], speed)
-        with col_v2:
-            if st.button("🛑 停止", use_container_width=True): inject_speech_script(stop=True)
-        with col_v3:
-            if st.button("🎙️ 音声ボタン表示", use_container_width=True): 
-                st.session_state.show_voice_btns = not st.session_state.show_voice_btns
-                st.rerun()
-
         st.session_state.font_size = st.slider("🔍 文字サイズ調整", 14, 45, st.session_state.font_size)
+        speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
+        
+        # Silk対応：直接発火ボタン
+        silk_voice_button("🔊 全文を読み上げる (Silk/Safari対応)", res["audio_script"], speed)
+
         st.divider()
         for i, block in enumerate(res.get("explanation_blocks", [])):
             with st.container(border=True):
                 st.markdown(f'<div class="content-body">{block["text"].replace("\\n", "<br>")}</div>', unsafe_allow_html=True)
-                if st.session_state.show_voice_btns:
-                    if st.button(f"▶ 再生", key=f"v_{i}"): 
-                        inject_speech_script(block["audio_target"], speed, is_english=(res.get("used_subject")=="英語"))
+                silk_voice_button(f"▶ このブロックを再生", block["audio_target"], speed, lang=("en-US" if res["used_subject"]=="英語" else "ja-JP"))
 
         st.subheader("📝 練習問題")
         user_page = st.text_input("📖 ページ確認", value=res.get("page", ""))
         score, q_list = 0, res.get("quizzes", [])
         for i, q in enumerate(q_list):
             ans = st.radio(f"問{i+1}: {q['question']} ({q['location']})", q['options'], key=f"q_{i}", index=None)
-            if ans:
-                if ans == q['options'][q['answer']]:
-                    st.success("⭕ 正解！"); score += 1
-                else: st.error(f"❌ 不正解。正解は「{q['options'][q['answer']]}」")
+            if ans == q['options'][q['answer']]: score += 1
+            elif ans: st.error(f"正解: {q['options'][q['answer']]}")
 
-        if len(q_list) > 0 and st.button("🏁 結果を記録", use_container_width=True):
+        if len(q_list) > 0 and st.button("🏁 結果を記録"):
             rate = (score / len(q_list)) * 100
             rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
             st.success(res["boost_comments"][rank]["text"])
-            inject_speech_script(res["boost_comments"][rank]["script"], speed)
+            silk_voice_button("🎊 ブーストメッセージを聴く", res["boost_comments"][rank]["script"], speed)
             jst_now = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%m/%d %H:%M")
-            if res.get("used_subject") not in st.session_state.history: st.session_state.history[res.get("used_subject")] = []
-            st.session_state.history[res.get("used_subject")].append({"date": jst_now, "score": f"{rate:.0f}%"})
+            if res["used_subject"] not in st.session_state.history: st.session_state.history[res["used_subject"]] = []
+            st.session_state.history[res["used_subject"]].append({"date": jst_now, "score": f"{rate:.0f}%"})
 
 with tab2:
     for sub, logs in st.session_state.history.items():
