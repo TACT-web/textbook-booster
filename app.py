@@ -7,11 +7,12 @@ import io, json, time, re, datetime, gc
 APP_TITLE = "教科書ブースター 🚀"
 st.set_page_config(page_title=APP_TITLE, layout="centered", page_icon="🚀")
 
-# アイコン背景白・ホーム画面名固定
+# アイコン背景白・ホーム画面名固定（iPad/Android用）
 st.markdown(f"""
     <head>
         <meta name="apple-mobile-web-app-title" content="{APP_TITLE}">
         <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="default">
         <meta name="theme-color" content="#FFFFFF">
         <link rel="apple-touch-icon" href="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f680.png">
     </head>
@@ -40,7 +41,7 @@ SUBJECT_PROMPTS = {
     "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
 
-# --- 音声合成エンジン（Silk/Safari対応版） ---
+# --- 音声合成エンジン（Silk/Safari ユーザー操作イベント連動強化版） ---
 def inject_speech_script(text_list=None, speed=1.0, stop=False, is_english=False):
     if stop:
         js_code = "<script>window.parent.speechSynthesis.cancel();</script>"
@@ -52,19 +53,24 @@ def inject_speech_script(text_list=None, speed=1.0, stop=False, is_english=False
         <script>
             (function() {{
                 const synth = window.parent.speechSynthesis;
-                synth.cancel();
                 const texts = {json_texts};
-                const speak = () => {{
+                const lang = "{lang}";
+                const speed = {speed};
+                
+                const speakNow = () => {{
+                    synth.cancel();
                     texts.forEach((txt) => {{
                         const uttr = new SpeechSynthesisUtterance(txt.replace(/\\\\n/g, ' '));
-                        uttr.rate = {speed};
-                        uttr.lang = "{lang}";
+                        uttr.rate = speed;
+                        uttr.lang = lang;
                         synth.speak(uttr);
                     }});
                 }};
+
                 if (synth.getVoices().length === 0) {{
-                    window.parent.speechSynthesis.onvoiceschanged = speak;
-                }} else {{ speak(); }}
+                    synth.onvoiceschanged = speakNow;
+                }}
+                speakNow();
             }})();
         </script>
         """
@@ -91,7 +97,7 @@ if not st.session_state.agreed:
         agree_check = st.checkbox("上記の内容を理解し、すべての条項に同意します。")
 
     if agree_check:
-        with st.form("init_form"):
+        with st.form("init_settings"):
             st.subheader("🛠️ 学習ブースト設定")
             api_key = st.text_input("Gemini API Key", type="password")
             c1, c2 = st.columns(2)
@@ -130,8 +136,10 @@ with tab1:
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
         with st.status("解析中...🚀"):
-            img = Image.open(cam_file).convert("RGB")
-            img.thumbnail((1024, 1024))
+            # 【iPadメモリ対策】バイナリ段階でリサイズし、生データを破棄
+            raw_bytes = cam_file.read()
+            img_pill = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+            img_pill.thumbnail((1024, 1024), Image.LANCZOS)
             
             # プロンプト（【完全再現】一言一句変更なし）
             prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}担当の天才教育者です。
@@ -163,24 +171,32 @@ with tab1:
                 "quizzes": [{{ "question":"..", "options":["A","B","C","D"], "answer":0, "location":"P.〇" }}]
             }}"""
             
-            res_raw = model.generate_content([prompt, img])
-            del img; gc.collect()
-            res_json = json.loads(re.search(r"\{.*\}", res_raw.text, re.DOTALL).group())
-            res_json["used_subject"] = final_subject_name
-            st.session_state.final_json = res_json
-            st.session_state.show_voice_btns = (final_subject_name == "英語")
-            st.rerun()
+            res_raw = model.generate_content([prompt, img_pill])
+            # メモリ即時解放
+            del img_pill, raw_bytes; gc.collect()
+            
+            json_match = re.search(r"\{.*\}", res_raw.text, re.DOTALL)
+            if json_match:
+                res_json = json.loads(json_match.group())
+                res_json["used_subject"] = final_subject_name
+                st.session_state.final_json = res_json
+                st.session_state.show_voice_btns = (final_subject_name == "英語")
+                st.rerun()
+            else:
+                st.error("解析エラーが発生しました。もう一度お試しください。")
 
     if st.session_state.final_json:
         res = st.session_state.final_json
         speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
         col_v1, col_v2, col_v3 = st.columns(3)
         with col_v1: 
-            if st.button("🔊 再生", use_container_width=True): inject_speech_script(res["audio_script"], speed)
+            if st.button("🔊 全文再生", use_container_width=True): inject_speech_script(res["audio_script"], speed)
         with col_v2:
             if st.button("🛑 停止", use_container_width=True): inject_speech_script(stop=True)
         with col_v3:
-            if st.button("🎙️ 個別音声切替", use_container_width=True): st.session_state.show_voice_btns = not st.session_state.show_voice_btns; st.rerun()
+            if st.button("🎙️ 音声ボタン表示", use_container_width=True): 
+                st.session_state.show_voice_btns = not st.session_state.show_voice_btns
+                st.rerun()
 
         st.session_state.font_size = st.slider("🔍 文字サイズ調整", 14, 45, st.session_state.font_size)
         st.divider()
@@ -188,9 +204,11 @@ with tab1:
             with st.container(border=True):
                 st.markdown(f'<div class="content-body">{block["text"].replace("\\n", "<br>")}</div>', unsafe_allow_html=True)
                 if st.session_state.show_voice_btns:
-                    if st.button(f"▶ 個別再生", key=f"v_{i}"): inject_speech_script(block["audio_target"], speed, is_english=(res.get("used_subject")=="英語"))
+                    if st.button(f"▶ 再生", key=f"v_{i}"): 
+                        inject_speech_script(block["audio_target"], speed, is_english=(res.get("used_subject")=="英語"))
 
         st.subheader("📝 練習問題")
+        user_page = st.text_input("📖 ページ確認", value=res.get("page", ""))
         score, q_list = 0, res.get("quizzes", [])
         for i, q in enumerate(q_list):
             ans = st.radio(f"問{i+1}: {q['question']} ({q['location']})", q['options'], key=f"q_{i}", index=None)
@@ -199,7 +217,7 @@ with tab1:
                     st.success("⭕ 正解！"); score += 1
                 else: st.error(f"❌ 不正解。正解は「{q['options'][q['answer']]}」")
 
-        if len(q_list) > 0 and st.button("🏁 完了記録", use_container_width=True):
+        if len(q_list) > 0 and st.button("🏁 結果を記録", use_container_width=True):
             rate = (score / len(q_list)) * 100
             rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
             st.success(res["boost_comments"][rank]["text"])
@@ -211,3 +229,4 @@ with tab1:
 with tab2:
     for sub, logs in st.session_state.history.items():
         with st.expander(f"📙 {sub}"): st.table(logs)
+    if st.button("🗑️ 履歴消去"): st.session_state.history = {}; st.rerun()
