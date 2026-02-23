@@ -109,15 +109,16 @@ tab1, tab2 = st.tabs(["📖 学習ブースト", "📈 ブースト履歴"])
 with tab1:
     t_col1, t_col2 = st.columns([3, 1])
     with t_col1:
-    st.markdown("""
-	    <div style="line-height: 1.1; margin-bottom: 20px;">
-            <span style="font-size: 24px; font-weight: bold; white-space: nowrap;">🚀教科書ブースター</span><br>
-            <span style="font-size: 14px; color: gray;">Ver 1.2</span>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with st.container(border=True):
-        # ...免責事項の内容...
+    	st.markdown("""
+	    	<div style="line-height: 1.1; margin-bottom: 20px;">
+            	<span style="font-size: 24px; font-weight: bold; white-space: nowrap;">🚀教科書ブースター</span><br>
+            	<span style="font-size: 14px; color: gray;">Ver 1.2</span>
+        	</div>
+        	""", unsafe_allow_html=True)
+    with t_col2:
+        subject_choice = st.selectbox(...)
+       
+	# ...免責事項の内容...
  
     with t_col2: subject_choice = st.selectbox("🎯 教科", list(SUBJECT_PROMPTS.keys()), label_visibility="collapsed")
     
