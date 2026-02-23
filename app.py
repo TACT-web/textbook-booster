@@ -12,15 +12,32 @@ if "agreed" not in st.session_state: st.session_state.agreed = False
 if "font_size" not in st.session_state: st.session_state.font_size = 18
 if "show_voice_btns" not in st.session_state: st.session_state.show_voice_btns = False
 
+# --- Chrome用音声制御関数 ---
+def speak_chrome(text, speed=1.0, lang="ja-JP"):
+    """ChromeのWeb Speech APIを直接制御して自動再生する"""
+    if text:
+        safe_text = text.replace("'", "\\'").replace("\n", " ")
+        js_code = f"""
+        <script>
+        var synth = window.parent.speechSynthesis;
+        synth.cancel();
+        var uttr = new SpeechSynthesisUtterance('{safe_text}');
+        uttr.rate = {speed};
+        uttr.lang = '{lang}';
+        synth.speak(uttr);
+        </script>
+        """
+        st.components.v1.html(js_code, height=0)
+
+def stop_speech():
+    """音声を停止する"""
+    st.components.v1.html("<script>window.parent.speechSynthesis.cancel();</script>", height=0)
+
+# --- スタイル設定 ---
 st.markdown(f"""
     <style>
     .content-body {{ font-size: {st.session_state.font_size}px !important; line-height: 1.6; }}
     .stTitle {{ font-size: 1.7rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-    .silk-btn {{
-        background-color: #ff4b4b; color: white; border: none; padding: 10px 20px;
-        border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; margin-bottom: 5px;
-    }}
-    .stop-btn {{ background-color: #6c757d; }}
     </style>
 """, unsafe_allow_html=True)
 
@@ -31,23 +48,8 @@ SUBJECT_PROMPTS = {
     "国語": "論理構造（序破急など）を分解し、筆者の主張を明確にしてください。なぜその結論に至ったか、本文の接続詞などを根拠に論理的に説明してください。",
     "理科": "現象のメカニズムを原理・法則から説明してください。図表がある場合は、軸の意味や数値の変化が示す本質を読み解き、日常の具体例を添えてください。",
     "社会": "歴史的背景と現代の繋がりをストーリー化してください。単なる事実の羅列ではなく『なぜこの出来事が起きたのか』という因果関係を重視して解説してください。",
-    "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
+    "その他": "画像内容を客観的に観察し、中立特かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
-
-# Silk対応：HTML/JS直接発火関数
-def silk_js_button(label, text="", speed=1.0, lang="ja-JP", is_stop=False):
-    safe_text = text.replace("'", "\\'").replace("\n", " ")
-    btn_class = "silk-btn stop-btn" if is_stop else "silk-btn"
-    click_action = "window.parent.speechSynthesis.cancel();" if is_stop else f"""
-        const synth = window.parent.speechSynthesis;
-        synth.cancel();
-        const uttr = new SpeechSynthesisUtterance('{safe_text}');
-        uttr.rate = {speed};
-        uttr.lang = '{lang}';
-        synth.speak(uttr);
-    """
-    html_code = f'<button class="{btn_class}" onclick="{click_action}">{label}</button>'
-    st.components.v1.html(html_code, height=55)
 
 # ==========================================
 # 1. 冒頭：免責事項 ＆ 同意（【完全再現】一言一句変更なし）
@@ -70,7 +72,7 @@ if not st.session_state.agreed:
         agree_check = st.checkbox("上記の内容を理解し、すべての条項に同意します。")
 
     if agree_check:
-        with st.form("init_form"):
+        with st.form("settings"):
             st.subheader("🛠️ 学習ブースト設定")
             api_key = st.text_input("Gemini API Key", type="password")
             c1, c2 = st.columns(2)
@@ -109,11 +111,11 @@ with tab1:
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
         with st.status("解析中...🚀"):
-            img_raw = cam_file.read()
-            img_pill = Image.open(io.BytesIO(img_raw)).convert("RGB")
+            raw_bytes = cam_file.read()
+            img_pill = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
             img_pill.thumbnail((1024, 1024), Image.LANCZOS)
             
-            # プロンプト（【完全再現】一言一句変更なし）
+            # 【完全再現】AIプロンプト
             prompt = f"""あなたは{st.session_state.school_type}{st.session_state.grade}担当の天才教育者です。
             
             【教科別個別ミッション: {final_subject_name}】
@@ -138,13 +140,14 @@ with tab1:
                 "explanation_blocks": [
                     {{"text": "本文・英文\\n解説", "audio_target": "再生用テキスト(英語なら英文のみ)"}}
                 ],
+                "english_only_script": "英語本文のみを繋げたテキスト（英語の場合のみ必須）",
                 "audio_script": "解説全文の台本",
                 "boost_comments": {{"high":{{"text":"..","script":".."}},"mid":{{"text":"..","script":".."}},"low":{{"text":"..","script":".."}}}},
                 "quizzes": [{{ "question":"..", "options":["A","B","C","D"], "answer":0, "location":"P.〇" }}]
             }}"""
             
             res_raw = model.generate_content([prompt, img_pill])
-            del img_pill, img_raw; gc.collect()
+            del img_pill, raw_bytes; gc.collect()
             
             match = re.search(r"(\{.*\})", res_raw.text, re.DOTALL)
             if match:
@@ -159,22 +162,39 @@ with tab1:
         st.session_state.font_size = st.slider("🔍 文字サイズ調整", 14, 45, st.session_state.font_size)
         speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
         
-        v_col1, v_col2, v_col3 = st.columns(3)
-        with v_col1: silk_js_button("🔊 全文再生", res["audio_script"], speed)
-        with v_col2: silk_js_button("🛑 停止", is_stop=True)
-        with v_col3:
-            if st.button("🎙️ 個別切替", use_container_width=True):
+        # --- 音声操作パネル ---
+        v_cols = st.columns(4 if res["used_subject"] == "英語" else 3)
+        with v_cols[0]:
+            if st.button("🔊 全文を聴く", use_container_width=True):
+                speak_chrome(res["audio_script"], speed)
+        
+        btn_idx = 1
+        if res["used_subject"] == "英語":
+            with v_cols[btn_idx]:
+                if st.button("🔊 英文のみ全再生", use_container_width=True):
+                    speak_chrome(res.get("english_only_script", ""), speed, lang="en-US")
+            btn_idx += 1
+            
+        with v_cols[btn_idx]:
+            if st.button("🛑 停止", use_container_width=True):
+                stop_speech()
+        
+        with v_cols[btn_idx + 1]:
+            if st.button("🔊 個別表示", use_container_width=True):
                 st.session_state.show_voice_btns = not st.session_state.show_voice_btns
                 st.rerun()
 
         st.divider()
+        # --- 解説表示 ---
         for i, block in enumerate(res.get("explanation_blocks", [])):
             with st.container(border=True):
                 st.markdown(f'<div class="content-body">{block["text"].replace("\\n", "<br>")}</div>', unsafe_allow_html=True)
                 if st.session_state.show_voice_btns:
-                    lang_code = "en-US" if res["used_subject"]=="英語" else "ja-JP"
-                    silk_js_button("▶ 再生", block["audio_target"], speed, lang=lang_code)
+                    l_code = "en-US" if res["used_subject"] == "英語" else "ja-JP"
+                    if st.button(f"▶ 再生", key=f"voice_{i}"):
+                        speak_chrome(block["audio_target"], speed, lang=l_code)
 
+        # --- 練習問題 ---
         st.subheader("📝 練習問題")
         user_page = st.text_input("📖 ページ確認", value=res.get("page", ""))
         score, q_list = 0, res.get("quizzes", [])
@@ -185,11 +205,20 @@ with tab1:
                     st.success("⭕ 正解！"); score += 1
                 else: st.error(f"❌ 不正解。正解は「{q['options'][q['answer']]}」")
 
+        # --- 結果記録 ＆ 自動再生 ---
         if len(q_list) > 0 and st.button("🏁 結果を記録", use_container_width=True):
             rate = (score / len(q_list)) * 100
             rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
-            st.success(res["boost_comments"][rank]["text"])
-            silk_js_button("🎊 ブーストメッセージを聴く", res["boost_comments"][rank]["script"], speed)
+            
+            # 【Chrome特化】自動表記 & 自動音声
+            st.divider()
+            st.header(f"🏁 スコア：{rate:.0f}% ({score}/{len(q_list)}問正解)")
+            st.info(res["boost_comments"][rank]["text"])
+            
+            # 自動音声発火
+            speak_chrome(res["boost_comments"][rank]["script"], speed)
+            
+            # 履歴保存
             jst_now = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%m/%d %H:%M")
             if res["used_subject"] not in st.session_state.history: st.session_state.history[res["used_subject"]] = []
             st.session_state.history[res["used_subject"]].append({"date": jst_now, "score": f"{rate:.0f}%"})
