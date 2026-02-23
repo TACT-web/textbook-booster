@@ -108,7 +108,7 @@ tab1, tab2 = st.tabs(["📖 学習ブースト", "📈 ブースト履歴"])
 
 with tab1:
     t_col1, t_col2 = st.columns([3, 1])
-    with t_col1:
+with t_col1:
     st.markdown("""
 	    <div style="line-height: 1.1; margin-bottom: 20px;">
             <span style="font-size: 24px; font-weight: bold; white-space: nowrap;">🚀教科書ブースター</span><br>
