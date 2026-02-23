@@ -162,7 +162,7 @@ with tab1:
         st.session_state.font_size = st.slider("🔍 文字サイズ調整", 14, 45, st.session_state.font_size)
         speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
         
-        silk_voice_button("🔊 全文を読み上げる (Silk/Safari対応)", res["audio_script"], speed)
+        silk_voice_button("🔊 全文を読み上げる ", res["audio_script"], speed)
 
         st.divider()
         for i, block in enumerate(res.get("explanation_blocks", [])):
