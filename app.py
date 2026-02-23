@@ -221,7 +221,7 @@ with tab1:
             # 履歴保存
             jst_now = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%m/%d %H:%M")
             if res["used_subject"] not in st.session_state.history: st.session_state.history[res["used_subject"]] = []
-            st.session_state.history[res["used_subject"]].append({"date": jst_now, "score": f"{rate:.0f}%"})
+            st.session_state.history[res["used_subject"]].append({"date": jst_now, "page": user_page, "score": f"{rate:.0f}%"})
 
 with tab2:
     for sub, logs in st.session_state.history.items():
