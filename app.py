@@ -15,7 +15,6 @@ st.markdown(f"""
     <style>
     .content-body {{ font-size: {st.session_state.font_size}px !important; line-height: 1.6; }}
     .stTitle {{ font-size: 1.7rem !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-    /* Silk/Safari用カスタムボタンのスタイル */
     .silk-btn {{
         background-color: #ff4b4b; color: white; border: none; padding: 10px 20px;
         border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; margin-bottom: 10px;
@@ -33,9 +32,7 @@ SUBJECT_PROMPTS = {
     "その他": "画像内容を客観的に観察し、中立的かつ平易な言葉で要点を3つのポイントに整理して解説してください。"
 }
 
-# --- Silk/Safari完全対応：直結型音声再生コンポーネント ---
 def silk_voice_button(label, text, speed=1.0, lang="ja-JP"):
-    # JS内の改行や引用符をエスケープ
     safe_text = text.replace("'", "\\'").replace("\n", " ")
     html_code = f"""
     <button class="silk-btn" onclick="
@@ -62,7 +59,7 @@ if not st.session_state.agreed:
         利用者は、本アプリで取り扱う教科書等の著作物が著作権法により保護されていることを認識し、解析結果等を権利者の許可なく第三者に公開（SNS、ブログ等への掲載）してはならないものとします。
         
         **第2条（AI生成物の正確性と免責）**
-        本アプリが提供する解説および回答は、人工知能による推論に基づくものであり、その正確性、完全性、妥当性を保証するものではありません。生成された内容に起になる学習上の不利益や損害について、開発者は一切の責任を負いません。
+        本アプリが提供する解説および回答は、人工知能による推論に基づくものであり、その正確性、完全性、妥当性を保証するものではありません。生成された内容に起因する学習上の不利益や損害について、開発者は一切の責任を負いません。
         
         **第3条（利用目的）**
         本アプリは利用者の私的な学習補助を目的として提供されるものです。試験等の最終的な確認は、必ず公式な教材および指導者の指示に従ってください。
@@ -109,7 +106,6 @@ with tab1:
         model = genai.GenerativeModel('gemini-3-flash-preview')
         
         with st.status("解析中...🚀"):
-            # 【iPad/Silkメモリ対策】
             raw_bytes = cam_file.read()
             img_pill = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
             img_pill.thumbnail((1024, 1024), Image.LANCZOS)
@@ -146,17 +142,26 @@ with tab1:
             res_raw = model.generate_content([prompt, img_pill])
             del img_pill, raw_bytes; gc.collect()
             
-            res_json = json.loads(re.search(r"\{.*\}", res_raw.text, re.DOTALL).group())
-            res_json["used_subject"] = final_subject_name
-            st.session_state.final_json = res_json
-            st.rerun()
+            # --- 修正箇所: JSON抽出の安定化 ---
+            try:
+                # 最初に { と 最後に } がある範囲を探し出す
+                match = re.search(r"(\{.*\})", res_raw.text, re.DOTALL)
+                if match:
+                    json_str = match.group(1)
+                    res_json = json.loads(json_str)
+                    res_json["used_subject"] = final_subject_name
+                    st.session_state.final_json = res_json
+                    st.rerun()
+                else:
+                    st.error("AIの応答からデータを取り出せませんでした。もう一度試してください。")
+            except Exception as e:
+                st.error(f"解析中にエラーが発生しました。画像を撮り直してください。")
 
     if st.session_state.final_json:
         res = st.session_state.final_json
         st.session_state.font_size = st.slider("🔍 文字サイズ調整", 14, 45, st.session_state.font_size)
         speed = st.slider("🐌 音声速度調整", 0.5, 2.0, 1.0, 0.1)
         
-        # Silk対応：直接発火ボタン
         silk_voice_button("🔊 全文を読み上げる (Silk/Safari対応)", res["audio_script"], speed)
 
         st.divider()
