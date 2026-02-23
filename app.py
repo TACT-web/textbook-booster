@@ -80,7 +80,7 @@ if not st.session_state.agreed:
         
         **第2条（AI生成物の正確性と免責）**
         本アプリが提供する解説および回答は、人工知能による推論に基づくものであり、その正確性、完全性、妥当性を保証するものではありません。生成された内容に起因する学習上の不利益や損害について、開発者は一切の責任を負いません。
-        
+       
         **第3条（利用目的）**
         本アプリは利用者の私的な学習補助を目的として提供されるものです。試験等の最終的な確認は、必ず公式な教材および指導者の指示に従ってください。
         """)
@@ -145,6 +145,7 @@ with tab1:
             ###JSON形式で出力せよ###
             {{ "is_match": true, "detected_subject": "{final_subject_name}", "page": "数字", "explanation_blocks": [{{ "text": "..", "audio_target": ".." }}], "english_only_script": "..", "audio_script": "..", "boost_comments": {{ "high": {{"text":"..","script":".."}}, "mid": {{"text":"..","script":".."}}, "low": {{"text":"..","script":".."}} }}, "quizzes": [{{ "question":"..", "options":[".."], "answer":0, "location":"P.〇" }}] }}"""
             res_raw = model.generate_content([prompt, img])
+        
             match = re.search(r"(\{.*\})", res_raw.text, re.DOTALL)
             if match:
                 st.session_state.final_json = json.loads(match.group(1))
@@ -182,32 +183,46 @@ with tab1:
                     if st.button(f"▶ 再生", key=f"v_{i}"):
                         speak_chrome(block["audio_target"], speed, "en-US" if res["used_subject"]=="英語" else "ja-JP")
 
-        st.subheader("📝 練習問題")
-        u_page = st.text_input("📖 ページ確認", value=res.get("page", ""))
-        score, q_list = 0, res.get("quizzes", [])
-        
-        user_answers = []
-        for i, q in enumerate(q_list):
-            ans = st.radio(f"問{i+1}: {q['question']} ({q['location']})", q['options'], key=f"q_{i}", index=None)
-            user_answers.append(ans)
-            if ans and ans == q['options'][q['answer']]:
-                score += 1
+        # --- クイズセクション（一問一答・案B） ---
+        st.subheader(f"📝 ブースト・チェック")
+        user_page = st.text_input("📖 ページ番号確認", value=res.get("page", ""))
+        quizzes = res.get("quizzes", [])
+        score = 0
+        answered_count = 0
 
-        if len(q_list) > 0 and st.button("🏁 結果を記録", use_container_width=True):
-            rate = (score / len(q_list)) * 100
-            rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
-            st.header(f"🏁 スコア：{rate:.0f}% ({score}/{len(q_list)}問正解)")
-            st.info(res["boost_comments"][rank]["text"])
-            speak_chrome(res["boost_comments"][rank]["script"], speed)
+        for i, q in enumerate(quizzes):
+            # Keyを固定して回答消失を防止
+            q_id = f"q_fixed_{i}_{final_subject_name}"
+            ans = st.radio(f"問{i+1}: {q.get('question')} ({q.get('location')})", q.get('options'), key=q_id, index=None)
             
-            # --- 🛠️ 履歴の自動保存実行 ---
-            now = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%m/%d %H:%M")
-            subj_key = res["used_subject"]
-            if subj_key not in st.session_state.history: 
-                st.session_state.history[subj_key] = []
-            
-            st.session_state.history[subj_key].append({"date": now, "page": u_page, "score": f"{rate:.0f}%"})
-            save_history(st.session_state.history)
+            if ans:
+                answered_count += 1
+                correct_idx = q.get('answer')
+                correct_val = q.get('options')[correct_idx]
+                if ans == correct_val:
+                    st.success(f"⭕ 正解！")
+                    score += 1
+                else:
+                    st.error(f"❌ 残念。正解は「{correct_val}」です。")
+
+        # すべて回答されたら記録ボタンを表示
+        if len(quizzes) > 0 and answered_count == len(quizzes):
+            if st.button("🏁 結果を履歴に記録", use_container_width=True):
+                rate = (score / len(quizzes)) * 100
+                rank = "high" if rate == 100 else "mid" if rate >= 50 else "low"
+                st.header(f"🏁 スコア：{rate:.0f}% ({score}/{len(quizzes)}問正解)")
+                st.info(res["boost_comments"][rank]["text"])
+                speak_chrome(res["boost_comments"][rank]["script"], speed)
+                
+                # --- 履歴の自動保存実行 ---
+                now = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%m/%d %H:%M")
+                subj_key = res["used_subject"]
+                if subj_key not in st.session_state.history: 
+                    st.session_state.history[subj_key] = []
+                
+                st.session_state.history[subj_key].append({"date": now, "page": user_page, "score": f"{rate:.0f}%"})
+                save_history(st.session_state.history)
+                st.toast("学習履歴を保存しました！")
 
 with tab2:
     for sub, logs in st.session_state.history.items():
