@@ -1,20 +1,21 @@
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
-import io, json, time, re, datetime, gc
+import io, json, time, re, datetime, gc, os
 
 # --- 基本設定 ---
 st.set_page_config(page_title="教科書ブースター V1.2", layout="centered", page_icon="🚀")
 
 # --- 🛠️ 履歴の自動永続化ロジック (Local Storage 擬似実装) ---
-# Streamlitのsession_stateを起動時に特定ファイルから復元し、変更時に保存する仕組み
-import os
 SAVE_FILE = "study_history.json"
 
 def load_history():
     if os.path.exists(SAVE_FILE):
-        with open(SAVE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(SAVE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
 def save_history(history):
@@ -49,7 +50,7 @@ def stop_speech():
 
 st.markdown(f"""<style>.content-body {{ font-size: {st.session_state.font_size}px !important; line-height: 1.6; }}</style>""", unsafe_allow_html=True)
 
-# --- 教科別個別プロンプト（【完全再現】一言一句変更なし） ---
+# --- 教科別個別プロンプト ---
 SUBJECT_PROMPTS = {
     "英語": "英文を意味の塊（/）で区切るスラッシュリーディング形式（英文 / 訳）を徹底してください。重要な文法構造や熟語についても触れてください。",
     "数学": "公式の根拠を重視し、計算過程を一行ずつ省略せず論理的に解説してください。単なる手順ではなく『なぜこの解法を選ぶのか』という思考の起点を言語化してください。",
@@ -60,7 +61,7 @@ SUBJECT_PROMPTS = {
 }
 
 # ==========================================
-# 1. 冒頭：免責事項 ＆ 同意（【完全再現】一言一句変更なし）
+# 1. 冒頭：免責事項 ＆ 同意
 # ==========================================
 if not st.session_state.agreed:
     st.markdown("""
@@ -71,8 +72,6 @@ if not st.session_state.agreed:
         """, unsafe_allow_html=True)
     
     with st.container(border=True):
-        # ...免責事項の内容...
-
         st.markdown("""
         ### 【本ソフトウェア利用に関する同意事項】
         
@@ -85,19 +84,26 @@ if not st.session_state.agreed:
         **第3条（利用目的）**
         本アプリは利用者の私的な学習補助を目的として提供されるものです。試験等の最終的な確認は、必ず公式な教材および指導者の指示に従ってください。
         """)
+        
         if st.checkbox("上記の内容を理解し、すべての条項に同意します。"):
             with st.form("settings"):
                 api_key = st.text_input("Gemini API Key", type="password")
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.session_state.school_type = st.selectbox("学校区分", ["小学生", "中学生", "高校生"])
-                    st.session_state.grade = st.selectbox("学年", [f"{i}年生" for i in range(1, 7)])
+                    school_type = st.selectbox("学校区分", ["小学生", "中学生", "高校生"])
+                    grade = st.selectbox("学年", [f"{i}年生" for i in range(1, 7)])
                 with c2:
-                    st.session_state.age_val = st.slider("解説ターゲット年齢", 7, 20, 15)
-                    st.session_state.quiz_count = st.selectbox("問題数", [10, 15, 20, 25])
+                    age_val = st.slider("解説ターゲット年齢", 7, 20, 15)
+                    quiz_count = st.selectbox("問題数", [10, 15, 20, 25])
+                
                 if st.form_submit_button("🚀 ブーストを開始する", use_container_width=True):
                     if api_key:
-                        st.session_state.user_api_key, st.session_state.agreed = api_key, True
+                        st.session_state.user_api_key = api_key
+                        st.session_state.school_type = school_type
+                        st.session_state.grade = grade
+                        st.session_state.age_val = age_val
+                        st.session_state.quiz_count = quiz_count
+                        st.session_state.agreed = True
                         st.rerun()
     st.stop()
 
@@ -109,18 +115,15 @@ tab1, tab2 = st.tabs(["📖 学習ブースト", "📈 ブースト履歴"])
 with tab1:
     t_col1, t_col2 = st.columns([3, 1])
     with t_col1:
-    	st.markdown("""
-	    	<div style="line-height: 1.1; margin-bottom: 20px;">
-            	<span style="font-size: 24px; font-weight: bold; white-space: nowrap;">🚀教科書ブースター</span><br>
-            	<span style="font-size: 14px; color: gray;">Ver 1.2</span>
-        	</div>
-        	""", unsafe_allow_html=True)
+        st.markdown("""
+            <div style="line-height: 1.1; margin-bottom: 20px;">
+                <span style="font-size: 24px; font-weight: bold; white-space: nowrap;">🚀教科書ブースター</span><br>
+                <span style="font-size: 14px; color: gray;">Ver 1.2</span>
+            </div>
+            """, unsafe_allow_html=True)
+    
     with t_col2:
-        subject_choice = st.selectbox(...)
-       
-	# ...免責事項の内容...
- 
-    with t_col2: subject_choice = st.selectbox("🎯 教科", list(SUBJECT_PROMPTS.keys()), label_visibility="collapsed")
+        subject_choice = st.selectbox("🎯 教科", list(SUBJECT_PROMPTS.keys()), label_visibility="collapsed")
     
     final_subject_name = subject_choice
     if subject_choice == "その他":
@@ -157,15 +160,20 @@ with tab1:
         v_cols = st.columns(4 if res["used_subject"] == "英語" else 3)
         with v_cols[0]:
             if st.button("🔊 全文を聴く", use_container_width=True): speak_chrome(res["audio_script"], speed)
+        
         btn_i = 1
         if res["used_subject"] == "英語":
             with v_cols[btn_i]:
                 if st.button("🔊 英文のみ全再生", use_container_width=True): speak_chrome(res.get("english_only_script", ""), speed, "en-US")
             btn_i += 1
+        
         with v_cols[btn_i]:
             if st.button("🛑 停止", use_container_width=True): stop_speech()
+        
         with v_cols[btn_i+1]:
-            if st.button("🔊 個別表示", use_container_width=True): st.session_state.show_voice_btns = not st.session_state.show_voice_btns; st.rerun()
+            if st.button("🔊 個別表示", use_container_width=True):
+                st.session_state.show_voice_btns = not st.session_state.show_voice_btns
+                st.rerun()
 
         for i, block in enumerate(res.get("explanation_blocks", [])):
             with st.container(border=True):
@@ -177,9 +185,13 @@ with tab1:
         st.subheader("📝 練習問題")
         u_page = st.text_input("📖 ページ確認", value=res.get("page", ""))
         score, q_list = 0, res.get("quizzes", [])
+        
+        user_answers = []
         for i, q in enumerate(q_list):
             ans = st.radio(f"問{i+1}: {q['question']} ({q['location']})", q['options'], key=f"q_{i}", index=None)
-            if ans and ans == q['options'][q['answer']]: score += 1
+            user_answers.append(ans)
+            if ans and ans == q['options'][q['answer']]:
+                score += 1
 
         if len(q_list) > 0 and st.button("🏁 結果を記録", use_container_width=True):
             rate = (score / len(q_list)) * 100
@@ -190,14 +202,19 @@ with tab1:
             
             # --- 🛠️ 履歴の自動保存実行 ---
             now = (datetime.datetime.utcnow() + datetime.timedelta(hours=9)).strftime("%m/%d %H:%M")
-            if res["used_subject"] not in st.session_state.history: st.session_state.history[res["used_subject"]] = []
-            st.session_state.history[res["used_subject"]].append({"date": now, "page": u_page, "score": f"{rate:.0f}%"})
-            save_history(st.session_state.history) # 自動書き込み
+            subj_key = res["used_subject"]
+            if subj_key not in st.session_state.history: 
+                st.session_state.history[subj_key] = []
+            
+            st.session_state.history[subj_key].append({"date": now, "page": u_page, "score": f"{rate:.0f}%"})
+            save_history(st.session_state.history)
 
 with tab2:
     for sub, logs in st.session_state.history.items():
-        with st.expander(f"📙 {sub}"): st.table(logs)
+        with st.expander(f"📙 {sub}"):
+            st.table(logs)
     if st.button("🗑️ 履歴消去"):
         st.session_state.history = {}
-        if os.path.exists(SAVE_FILE): os.remove(SAVE_FILE) # ファイルも消去
+        if os.path.exists(SAVE_FILE):
+            os.remove(SAVE_FILE)
         st.rerun()
